@@ -30,22 +30,22 @@ async def perform_inference(image: UploadFile = File(...), text: str = Form(...)
     # 2. Encode the image into vision feature vectors
     vision_features = vision_model.encode(image_bytes)
 
-    # 3. Create a fresh Engine for this request and submit the job
-    #    (In a real server this Engine would be long-lived and shared;
-    #     we create it per-request here to keep the example stateless.)
+    # 3. Create a fresh Engine and submit the job
     engine = Engine(llm_model)
     seq_id = engine.submit(text, vision_features)
 
-    # 4. Run the continuous batching loop to completion
-    results = engine.run(max_new_tokens=10)
+    # 4. Run the continuous batching loop — get results AND per-step trace
+    results, trace = engine.run(max_new_tokens=10)
     generated_token_ids = results.get(seq_id, [])
 
     return {
         "status": "success",
         "message": f"Received {len(image_bytes)} bytes of image and text: '{text}'.",
         "vision_features_extracted": vision_features is not None,
+        "num_vision_tokens": int(vision_features.shape[0]) if vision_features is not None else 0,
         "language_output": {
             "generated_token_ids": generated_token_ids,
             "num_tokens_generated": len(generated_token_ids),
-        }
+        },
+        "trace": trace,
     }
