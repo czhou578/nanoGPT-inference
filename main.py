@@ -13,6 +13,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Instantiate models globally so they preserve weights/state across requests
+vision_model = vision.Vision()
+llm_model = dummy_llm.Dummy_LLM()
+
 @app.get("/")
 def read_root():
     return {"Hello": "World"}
@@ -22,15 +26,11 @@ async def perform_inference(image: UploadFile = File(...), text: str = Form(...)
     # 1. Extract bytes from the uploaded image
     image_bytes = await image.read()
     
-    # 2. Route the image bytes to the Vision Encoder (if implemented)
-    vision_features = None
-    if hasattr(vision, 'encode'):
-        vision_features = vision.encode(image_bytes)
+    # 2. Route the image bytes to the Vision Encoder
+    vision_features = vision_model.encode(image_bytes)
         
-    # 3. Route the text and vision features to the Dummy LLM (if implemented)
-    language_output = None
-    if hasattr(dummy_llm, 'generate'):
-        language_output = dummy_llm.generate(text, vision_features)
+    # 3. Route the text and vision features to the Dummy LLM
+    language_output = llm_model.generate(text, vision_features)
         
     return {
         "status": "success",

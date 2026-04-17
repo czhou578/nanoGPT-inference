@@ -14,6 +14,7 @@ class ModelConfig:
 
     # Inference/System Settings
     block_size: int = 16  # Tokens per PagedAttention memory block
+    num_gpu_blocks: int = 1024  # Total number of physical blocks available
 
 # Create a global configuration instance to be imported easily
 CONFIG = ModelConfig()
