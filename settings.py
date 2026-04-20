@@ -16,5 +16,10 @@ class ModelConfig:
     block_size: int = 16  # Tokens per PagedAttention memory block
     num_gpu_blocks: int = 1024  # Total number of physical blocks available
 
+    # Chunked Prefill: max prompt tokens to process per step.
+    # Smaller = smoother decode latency but more steps to finish a prefill.
+    # Larger = faster prefill but longer stalls for decoding sequences.
+    prefill_chunk_size: int = 32
+
 # Create a global configuration instance to be imported easily
 CONFIG = ModelConfig()
