@@ -59,6 +59,8 @@ def cache_full_blocks(self, request, blocks, num_cached_blocks, num_full_blocks,
 
 ### `v1/core/kv_cache_manager.py` — the scheduler-facing API
 
+`num_new_computed_tokens` is the number of tokens from prompt that were *already* found in the cache.
+
 ```python
 # Lines 176-216 — returns cached blocks & a computed-token count for a new request
 def get_computed_blocks(self, request) -> tuple[KVCacheBlocks, int]:
