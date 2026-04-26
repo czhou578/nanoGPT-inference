@@ -1046,3 +1046,90 @@ If you want next step, I can:
 -   draw a **concrete FastAPI + scheduler + KV cache architecture**
     
 -   or map this directly to your **multi-LLM consensus app** (there’s a really nice optimization there)
+
+---
+
+# 13) What's Still Missing: Disaggregated Prefill/Decode
+
+One critical topic the preceding sections don't cover: **disaggregated prefill and decode**, which is the biggest near-term architectural shift in serving systems and directly affects how client-side batching should be designed.
+
+## The problem with co-located prefill and decode
+
+In a standard continuous batching server (like baseline vLLM), all sequences share the same pool of GPUs for both the prefill phase (processing the input prompt) and the decode phase (generating output tokens one by one).
+
+These two phases have completely different compute profiles:
+
+| Phase | Bottleneck | Compute intensity | Latency shape |
+|---|---|---|---|
+| **Prefill** | Compute-bound | High arithmetic intensity (like training) | Short burst, high FLOP |
+| **Decode** | Memory-bandwidth-bound | Low arithmetic intensity | Long tail, many small steps |
+
+When they share GPUs, they interfere. A long prefill (e.g. 16K token RAG context) blocks all decode steps for every other sequence in the batch. This is called **prefill-decode interference** and it causes P99 latency spikes.
+
+## Disaggregated serving: the architectural solution
+
+The solution is to split prefill and decode onto physically separate GPU pools:
+
+```
+Client request
+    |
+    v
+Prefill cluster (compute-optimized)
+    |  sends finished KV blocks over NVLink / PCIe / network
+    v
+Decode cluster (memory-bandwidth-optimized)
+    |
+    v
+Streaming tokens back to client
+```
+
+This is the direction of systems like **Splitwise**, **DistServe**, and **vLLM v0.4+**.
+
+## How this changes client-side batching strategy
+
+When the server is disaggregated, the optimal client batching window differs by request type:
+
+- **Prefill-heavy requests** (long system prompts, large documents): tolerate more buffering delay since the compute burst justifies grouping them to saturate the prefill cluster.
+- **Decode-heavy requests** (long generation, agents): stream immediately to the decode cluster; extra client delay just increases TTFT with no throughput benefit.
+
+> **Key insight:** as serving architectures disaggregate, client batching logic must become **request-profile-aware**, not just time or size threshold based.
+
+---
+
+# 14) The Future of Client-Side Batching and Serving
+
+Intelligence is migrating from the client into the serving infrastructure itself. Client-side batching is increasingly a stopgap rather than a primary optimization.
+
+### 1. Proactive / Predictive Scheduling
+
+Modern serving systems are beginning to maintain a lightweight model of client behavior. Instead of reacting to arrivals, the scheduler can pre-allocate KV cache slots and warm prefill pipelines for requests it predicts are coming (based on session patterns, heartbeats, or application-level hints). When this matures, the primary value of client batching â€” delivering a dense batch rather than a trickle â€” is absorbed by the server.
+
+### 2. Session-Aware Routing (Conversation Affinity)
+
+For interactive chatbots, the same KV cache from turn N can be reused for turn N+1 if the request routes to the same GPU. This is **conversation affinity routing**. When a client holds open a persistent connection (WebSocket or HTTP/2), the server eliminates re-prefill costs across turns. Client batching window design must respect this: don't batch across sessions unless the server can handle cross-session KV sharing.
+
+### 3. Edge-Side Pre-Batching and Heterogeneous Speculation
+
+As quantized draft models shrink to run on edge devices, an emerging pattern has the **client device run draft inference** while the **cloud handles verification**. The client is no longer purely passive; it produces structured token proposals. Batching at the edge becomes: "how many draft sequences do I send in one verification request?" This is a direct intersection of client batching and speculative decoding.
+
+---
+
+# 15) The Investor Lens (Aligned with the Inference Framework)
+
+Client-side batching sits in the **Serving / Runtime Layer** of the inference stack. By itself it is a table-stakes engineering practice, not a moat. But the surrounding strategic dynamics matter greatly.
+
+### Primary Value Drivers
+
+- **Commoditization of Serving as a Moat Erosion Signal:** When client-side batching is trivial to implement and server-side continuous batching is open-source (vLLM, SGLang), the serving layer's value shifts from "who built it" toward "who has the deepest workflow integration." A cloud inference provider whose primary value prop is "we do continuous batching better" will face severe margin compression within 12-18 months. Durable moats require network effects, proprietary data, or deep integrations â€” not better queuing algorithms.
+
+- **Disaggregation Creates a Hardware Procurement Signal:** If disaggregated prefill/decode becomes the production standard (highly likely by 2026-2027), it changes the hardware-per-dollar equation. Prefill clusters benefit from compute-dense GPUs (NVIDIA H100/H200). Decode clusters benefit from memory-bandwidth-dense hardware, where custom ASICs (Groq, Cerebras) have a structural advantage. Watch for operators buying **different classes of hardware** for prefill vs. decode as a leading indicator that disaggregated serving has crossed the production threshold.
+
+- **The Build vs. Buy Shift Toward Managed Serving Platforms:** As serving infrastructure grows more sophisticated (disaggregation, conversation affinity, speculative decoding), the engineering overhead to self-host correctly grows. This sustains managed inference API businesses (Together AI, Modal, Baseten) against open-source pressure. Evaluate managed inference platforms not on their batching algorithms but on **operational reliability, developer experience, and how well they abstract hardware heterogeneity** from the customer.
+
+- **Jevons Paradox in Throughput:** Continuous batching dramatically increased the number of concurrent users a single GPU can serve. This did not reduce GPU demand â€” it expanded the addressable market by making real-time AI features at consumer scale economically viable. The same pattern will repeat with disaggregated serving. Efficiency unlocks volume, volume sustains hardware demand.
+
+### Risk Factor
+
+The timeline from research paper to vLLM integration for serving innovations is now sub-6 months (see continuous batching, PagedAttention, speculative decoding). Disaggregated prefill/decode will follow the same path. Any business plan assuming a 24-month advantage on a serving optimization should be aggressively stress-tested.
+
+> **Summary signal:** Evaluate AI infrastructure companies not on whether they have mastered client or server-side batching (commoditized), but on whether they are building for **disaggregated, hardware-heterogeneous, session-aware serving** â€” the architectural direction the entire field is moving toward.
