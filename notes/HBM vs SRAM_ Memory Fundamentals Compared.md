@@ -455,3 +455,157 @@ This is why continuous batching and larger effective batches dramatically improv
 In short: **Arithmetic intensity is the “FLOPs-per-byte efficiency”** of your algorithm. It directly reveals whether your code (or LLM layer) is starving the compute units due to excessive data movement through the memory hierarchy — or whether it’s efficiently reusing data once it’s close to the tensor cores in registers and L1.
 
 For most LLM inference kernels, the goal is simple: **maximize reuse at every level** (HBM → L2 → L1/Shared → Registers) so AI becomes as high as possible. That’s the entire reason batching, FlashAttention, and paged KV cache exist.
+---
+
+# The Future of Memory Hierarchy Innovation
+
+The GPU memory hierarchy as described above â€” registers â†’ L1/shared â†’ L2 â†’ HBM â€” has been remarkably stable for over a decade. But the demands of LLM inference are now pushing this hierarchy to its physical limits, and several structural shifts are underway.
+
+## 1. HBM Generational Leaps (HBM3e â†’ HBM4 â†’ HBM4E)
+
+HBM bandwidth is doubling roughly every 2â€“3 years:
+
+| Generation | Bandwidth per stack | Capacity per stack | Interface width | Timeline |
+|---|---|---|---|---|
+| HBM2e | ~460 GB/s | 16 GB | 1024-bit | 2020 |
+| HBM3 | ~820 GB/s | 24 GB | 1024-bit | 2022 |
+| HBM3e | ~1.18 TB/s | 36 GB | 1024-bit | 2024 |
+| HBM4 | ~2+ TB/s | 48 GB | 2048-bit | 2025â€“2026 |
+| HBM4E | ~3+ TB/s | 64+ GB | 2048-bit | 2027+ |
+
+Each generational jump directly increases the decode-phase throughput ceiling (since decode is memory-bandwidth-bound). But the capacity improvements are equally important â€” larger HBM means more concurrent KV caches in memory, which means larger batches, which means higher arithmetic intensity, which means better GPU utilization. The bandwidth and capacity improvements are multiplicative in their effect on inference economics.
+
+## 2. Larger On-Chip SRAM (The "Near-Memory Compute" Trend)
+
+The gap between on-chip SRAM bandwidth (~19 TB/s) and HBM bandwidth (~3 TB/s) is ~6Ã—. Some architectures are betting that **dramatically increasing on-chip SRAM** can absorb workloads that currently spill to HBM:
+
+- **Cerebras WSE-3**: 44 GB of on-chip SRAM across an entire wafer-scale chip. No HBM at all. Model weights live entirely in SRAM. This eliminates the HBM bottleneck entirely for models that fit.
+- **Groq LPU**: Large SRAM arrays designed for deterministic, ultra-low-latency inference. No HBM â†’ no memory-bandwidth wall during decode.
+- **Apple Neural Engine / Edge NPUs**: Unified memory architectures where LPDDR serves as both system and "HBM-equivalent" memory, with generous on-chip SRAM for tiling.
+
+The trend: for inference-specific chips, the economically optimal point may shift toward **more SRAM, less or no HBM** â€” especially for decode workloads where the working set (one token's worth of activations + weight reads) can be tiled entirely through large SRAM.
+
+## 3. Processing-In-Memory (PIM) and Near-Memory Compute
+
+The most radical future direction attacks the hierarchy itself. Instead of moving data from HBM to compute units, **put compute inside the memory**:
+
+- Samsung's HBM-PIM adds simple ALUs inside HBM stacks
+- UPMEM and others are building DRAM with embedded processing
+- Academic proposals for "compute-enhanced memory" that can do matrix-vector products without data leaving the memory die
+
+For LLM decode (which is essentially repeated matrix-vector multiplications against cached weights), PIM could eliminate the HBMâ†’L2â†’L1â†’register pipeline entirely. The weight stays where it is; the compute happens in-place.
+
+**Status**: Early-stage. The compute density inside memory dies is far below dedicated tensor cores. But the energy savings are enormous (eliminating data movement saves ~100Ã— energy per operation), making this attractive for power-constrained edge inference.
+
+## 4. Heterogeneous Memory Tiering (HBM + CXL-attached DRAM + NVMe)
+
+As KV caches grow (long-context models with 128Kâ€“1M+ token windows), even 192 GB of HBM isn't enough. The future hierarchy adds new tiers:
+
+```
+Registers â†’ L1/Shared â†’ L2 â†’ HBM (hot KV cache, active weights)
+                                â†“
+                          CXL-attached DRAM (warm KV cache, paged-out sequences)
+                                â†“
+                          NVMe SSD (cold KV cache, session persistence)
+```
+
+CXL (Compute Express Link) enables pooled, shared memory across multiple GPUs and CPUs with ~200â€“400 ns latency â€” worse than HBM but far better than network-attached storage. This is the enabling technology for **KV cache paging beyond GPU memory**, allowing a single server to maintain thousands of concurrent long-context sessions by keeping only the active working set in HBM and paging cold KV entries to CXL DRAM.
+
+## 5. Quantization as a Memory-Hierarchy Optimization
+
+Quantization (FP16 â†’ FP8 â†’ INT4) is fundamentally a memory-hierarchy technique: it reduces the number of bytes that must traverse each level. Going from FP16 to INT4 cuts traffic by 4Ã— at every boundary (HBM â†’ L2 â†’ L1 â†’ registers). This has the same effect as quadrupling HBM bandwidth â€” without changing the hardware.
+
+The future frontier is **mixed-precision at the hierarchy level**: use FP8 in HBM, dequantize to FP16 during the L2â†’L1 transfer, and compute in FP16/BF16 in registers. This minimizes bandwidth pressure at the most constrained level (HBM) while preserving numerical precision where it matters (compute).
+
+---
+
+# The Investor Lens (Aligned with the Inference Framework)
+
+Memory hierarchy innovation sits at the intersection of the **Hardware Layer** and the **Compilation / Optimization Layer** of the inference stack. It is arguably the most foundational investment axis in AI infrastructure because every other optimization (batching, quantization, attention algorithms, serving architecture) is ultimately constrained by how fast data can move through the hierarchy.
+
+## The Core Thesis
+
+> **The memory wall â€” not the compute wall â€” is the binding constraint on AI inference economics. Every dollar of investment return in AI infrastructure traces back to how efficiently data moves from where it's stored to where it's computed.**
+
+This is not a temporary bottleneck. It is a permanent consequence of physics: data movement costs energy proportional to distance, and the gap between compute scaling (transistor density, tensor core throughput) and memory scaling (bandwidth, capacity) continues to widen. The semiconductor industry calls this the **"memory wall"** and it has been the dominant architectural constraint since the early 2000s.
+
+## Primary Value Drivers
+
+### 1. HBM Suppliers as Critical Infrastructure
+
+HBM is manufactured by exactly three companies: **SK Hynix, Samsung, and Micron**. This is a tight oligopoly supplying the single most supply-constrained component in AI infrastructure.
+
+- **SK Hynix** currently leads in HBM3e yield and has the strongest relationship with NVIDIA (sole supplier for early H100 production runs). Their HBM revenue has grown >5Ã— since 2023.
+- **Samsung** is catching up on HBM3e yields and investing heavily in HBM4.
+- **Micron** has the smallest HBM share but is competitive on HBM3e and pursuing HBM4 aggressively.
+
+**Signal to watch**: HBM capacity allocation per GPU generation. When NVIDIA's next-gen GPU requires 6 or 8 HBM stacks per chip (vs. 5 on H100), it directly multiplies HBM revenue per GPU sold. Track stack count Ã— stacks per GPU Ã— GPU volume = total HBM demand.
+
+**Investor takeaway**: HBM suppliers have structural pricing power in a supply-constrained market. HBM ASPs are 3â€“5Ã— higher than commodity DRAM per GB. As long as AI inference demand grows (and it is â€” Jevons paradox), HBM suppliers capture a disproportionate share of the value chain. SK Hynix is the purest-play bet on AI inference hardware demand.
+
+### 2. The SRAM-vs-HBM Architecture Bet
+
+The choice between "lots of SRAM, no HBM" (Groq, Cerebras) vs. "some SRAM, lots of HBM" (NVIDIA, AMD) is a fundamental architectural bet with enormous investment implications:
+
+| Architecture | Strengths | Weaknesses | Best for |
+|---|---|---|---|
+| **Large SRAM** (Groq, Cerebras) | Deterministic latency, no memory wall, extreme bandwidth | Expensive per bit, limited capacity, model must fit | Decode-phase inference, latency-critical apps |
+| **HBM-centric** (NVIDIA, AMD) | High capacity, flexible, proven ecosystem | Memory-bandwidth-bound during decode, variable latency | Training, prefill, large-batch throughput |
+
+In a disaggregated serving world (see disaggregated prefill/decode notes), this maps cleanly:
+- **Prefill clusters**: HBM-centric GPUs (compute-bound, need capacity for large prompts)
+- **Decode clusters**: SRAM-heavy ASICs (bandwidth-bound, need deterministic low latency)
+
+**Signal to watch**: Production deployment announcements from Groq or Cerebras in decode-specific roles within disaggregated serving architectures. This would validate the "SRAM for decode" thesis and signal a structural market bifurcation.
+
+**Investor takeaway**: The inference hardware market is bifurcating along the memory-hierarchy axis. NVIDIA's dominance is secure for prefill/training (where HBM capacity and compute density matter) but vulnerable for decode (where SRAM bandwidth and latency determinism matter). The first ASIC vendor to achieve production-scale decode deployments at lower cost-per-generated-token than NVIDIA captures a large, fast-growing market segment.
+
+### 3. CXL and Memory Pooling as a Platform Shift
+
+CXL-attached memory pooling is an emerging infrastructure technology that changes how GPU clusters are built:
+
+- **Without CXL**: Each GPU has its own fixed HBM allocation. If a GPU's KV cache fills up, it must evict sequences or refuse new requests.
+- **With CXL**: GPUs can access a shared, disaggregated memory pool. KV cache pages can be dynamically migrated between GPUs and DRAM expansion modules. Effective memory capacity per GPU becomes much larger.
+
+This is analogous to the transition from local disk to networked storage in the 2000s â€” it decouples memory capacity from the compute node, enabling more flexible and efficient resource allocation.
+
+**Signal to watch**: CXL memory pool adoption in inference clusters. When a major cloud provider or inference startup deploys CXL-attached DRAM for KV cache expansion, it validates a new tier in the inference memory hierarchy and creates demand for CXL controllers, switches, and memory modules.
+
+**Investor takeaway**: CXL ecosystem companies (Astera Labs, Montage Technology, CXL memory module manufacturers) are positioned to benefit from the expansion of the inference memory hierarchy beyond on-package HBM. This is a 2026â€“2028 catalyst as long-context models (128Kâ€“1M+ tokens) create KV cache sizes that exceed even 192 GB of HBM.
+
+### 4. The Jevons Paradox in Memory
+
+Every generation of HBM that doubles bandwidth does not halve inference cost. Instead, it enables:
+- Larger models to be served (more parameters fit in memory)
+- Longer contexts (more KV cache fits in memory)
+- Larger batches (more concurrent users per GPU)
+- New use cases that were previously memory-blocked
+
+Total memory demand per AI workload has grown faster than memory bandwidth has improved. This is the Jevons paradox applied to the memory hierarchy: efficiency gains expand the use-case frontier faster than they reduce per-unit cost.
+
+**Investor takeaway**: Do not model HBM demand as a fixed function of GPU shipments. Model it as a function of **AI workload complexity**, which is growing faster than GPU shipment volume. Per-GPU HBM capacity is increasing (80 GB â†’ 141 GB â†’ 192 GB â†’ 288 GB), and GPU volume is increasing. The product of these two growth rates is the true HBM demand curve â€” and it is steeper than either alone.
+
+### 5. Processing-In-Memory as a Long-Term Disruption Risk
+
+PIM is currently pre-commercial for AI workloads, but it represents the most fundamental threat to the existing memory hierarchy:
+
+- If compute can happen inside HBM stacks, the entire L2 â†’ L1 â†’ register pipeline becomes less critical
+- NVIDIA's software moat (CUDA, cuBLAS, FlashAttention kernels) is built around optimizing data movement through the hierarchy. PIM would make much of that optimization stack irrelevant
+- The energy savings (~100Ã— per operation) make PIM extremely attractive for power-constrained deployments (edge, mobile, data center cooling limits)
+
+**Timeline**: 5â€“10 years for meaningful production AI deployment. Samsung's HBM-PIM is a directional signal but far from production-ready for transformer inference.
+
+**Investor takeaway**: PIM is a watch-list item, not an actionable thesis today. But it is the long-term tail risk for every company whose value derives from optimizing data movement (NVIDIA's software stack, inference serving startups, memory-bandwidth-optimized ASICs). If PIM matures, it restructures the entire inference value chain.
+
+## Risk Factors (Memory-Specific)
+
+**Risk 1 â€” HBM supply constraints create allocation-driven winners and losers.** When HBM supply is tight (as in 2023â€“2024), companies with preferred supplier relationships (NVIDIA with SK Hynix) can ship GPUs; competitors cannot. This concentration risk favors incumbents during supply crunches but reverses when supply normalizes.
+
+**Risk 2 â€” Architecture shifts that reduce memory pressure.** State Space Models (Mamba, RWKV) replace the KV cache with a fixed-size recurrent state. If SSMs reach transformer quality, the memory-bandwidth bottleneck during decode largely disappears, reducing the value of HBM bandwidth improvements and SRAM-heavy decode ASICs. MoE architectures also change memory access patterns (sparse, irregular) in ways that favor bandwidth over capacity.
+
+**Risk 3 â€” Quantization advances that outpace memory scaling.** If 1-bit or 2-bit quantization becomes practical without quality loss, it effectively multiplies memory bandwidth by 8â€“16Ã— at the software level. This would reduce the urgency for hardware memory improvements and compress HBM pricing power.
+
+## Summary Signal for Investors
+
+> **Follow the bytes, not the FLOPs.** The binding constraint in AI inference is how fast data moves through the memory hierarchy â€” from HBM to registers. Every company in the AI value chain is either (a) building hardware to widen this pipe (HBM suppliers, SRAM-heavy ASICs, CXL), (b) building software to reduce traffic through it (quantization, FlashAttention, kernel fusion), or (c) benefiting from the downstream cost reductions when (a) and (b) succeed (AI-native SaaS, enterprise AI adopters). The most durable investment position is in the pipe itself â€” HBM suppliers and memory-hierarchy-aware silicon designers â€” because efficiency gains at the software layer expand demand faster than they reduce it.
+
