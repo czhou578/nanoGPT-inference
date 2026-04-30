@@ -31,6 +31,7 @@ export const categories = [
   { id: 'roofline-model', name: 'Roofline Model & Arithmetic Intensity', icon: '📐' },
   { id: 'vllm-internals', name: 'vLLM Internals', icon: '⚙️' },
   { id: 'investor-framework', name: 'Investor Framework', icon: '💰' },
+  { id: 'api-pricing', name: 'API Pricing & Inference Economics', icon: '💲' },
   // Placeholder categories (no files yet)
   { id: 'token-parallelism', name: 'Token Parallelism', icon: '🧩', placeholder: true },
   { id: 'fp8-kernels', name: 'FP8 Kernels', icon: '🔢', placeholder: true },
@@ -61,6 +62,7 @@ const fileMapping = {
   'reiner-pope-podcast.md': 'roofline-model',
   'vllm_concepts.md': 'vllm-internals',
   'investor.md': 'investor-framework',
+  'api-pricing-inference-costs.md': 'api-pricing',
 };
 
 // Files to exclude from the knowledge base
