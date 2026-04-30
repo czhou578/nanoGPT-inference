@@ -466,3 +466,183 @@ In modern high-performance serving systems (vLLM, TensorRT-LLM, etc.), you’ll 
 The end result is that even a single 10k+ token request no longer monopolizes the GPU for a huge prefill — its work can be parallelized internally while the system continues serving other users via continuous batching.
 
 If you’d like, I can go deeper into Context Parallelism (with ring attention), how it differs from tensor parallelism, or examples of speculative decoding as token-level parallelism in decode. Just let me know which direction interests you!
+
+---
+
+# The Future of Dynamic Batching and Token Parallelism
+
+The techniques described above â€” continuous batching, token/context parallelism, chunked prefill â€” are the current production standard. But the serving stack is evolving rapidly. Several structural shifts will reshape how batching and parallelism work over the next 2â€“5 years.
+
+## 1. Disaggregated Batching: Separate Schedulers for Prefill and Decode
+
+Today, the continuous batching scheduler manages both prefill and decode on the same GPU pool. The near-term future separates these into independent scheduling domains:
+
+- **Prefill scheduler**: Manages a pool of compute-dense GPUs. Optimizes for prefill throughput â€” processing the longest queued prompts first, maximizing compute utilization.
+- **Decode scheduler**: Manages a pool of bandwidth-dense GPUs/ASICs. Optimizes for batch density â€” keeping as many concurrent decode sequences in flight as memory allows.
+
+This means the continuous batching loop splits into two loops:
+
+```
+PREFILL LOOP:                          DECODE LOOP:
+  pick request from queue                receive KV cache from prefill cluster
+  run prefill                            add sequence to decode batch
+  send KV cache to decode cluster        decode one token for all active sequences
+  pick next request                      remove finished sequences
+```
+
+Each loop has its own scheduling policy, its own batch size limits, and its own hardware. The KV cache transfer between them becomes a first-class scheduling concern.
+
+**Implication for token parallelism**: Prefill-side token parallelism (context parallelism, chunked prefill) becomes more aggressive because the prefill cluster is dedicated â€” no decode sequences are competing for resources. Decode-side token parallelism (speculative decoding, MTP) becomes the primary throughput lever for the decode cluster.
+
+## 2. Speculative Decoding Integrated Into the Batch Scheduler
+
+Current serving systems treat speculative decoding as an optional per-sequence optimization. The future integrates it into the batch scheduler itself:
+
+- The scheduler maintains a **draft budget** per decode step â€” how many of the GPU's resources to allocate to draft generation vs. verification
+- For sequences where the draft model has high acceptance rates, the scheduler allocates more speculation depth (8â€“12 draft tokens)
+- For sequences with low acceptance rates (creative/high-temperature sampling), the scheduler falls back to standard autoregressive decoding
+- The batch contains a mix of speculating and non-speculating sequences, dynamically balanced per step
+
+This is **adaptive speculative batching** â€” the serving system optimizes the overall batch throughput, not just individual sequence speed.
+
+## 3. Multi-Token Prediction (MTP) Replaces External Draft Models
+
+Instead of maintaining a separate draft model for speculative decoding, models trained with multi-token prediction heads (like DeepSeek-V3) predict 2â€“4 future tokens from the same hidden state:
+
+- No extra model to load or manage
+- Perfect KV cache sharing between draft and verify (same model)
+- The batch scheduler simply runs the MTP heads for all sequences in the batch simultaneously, then verifies in a single batched forward pass
+
+This simplifies the serving stack significantly. The draft model parameter â€” the most finicky part of speculative decoding (wrong draft model = poor acceptance rate = no speedup) â€” disappears. MTP makes token parallelism a native model capability rather than a serving-layer bolt-on.
+
+## 4. Workload-Aware Batch Composition
+
+Current schedulers treat all requests as interchangeable. Future schedulers will compose batches based on workload characteristics:
+
+| Request property | Scheduling impact |
+|---|---|
+| Short prompt, short output (simple chat) | Group with similar requests for minimal prefill interference |
+| Long prompt, short output (RAG summarization) | Route to prefill-heavy cluster, brief decode |
+| Short prompt, long output (creative writing, code gen) | Route to decode-heavy cluster, minimal prefill |
+| Reasoning request (long chain-of-thought) | Reserve decode capacity for extended generation |
+
+The scheduler predicts output length and compute intensity at admission time (using lightweight classifiers or historical statistics per prompt pattern), then routes to the optimal cluster and batching strategy.
+
+## 5. Hierarchical Batching for Multi-Model Pipelines
+
+Modern AI applications don't use a single model. They chain multiple models:
+
+```
+Router model â†’ Main LLM â†’ Tool-use model â†’ Verification model
+```
+
+Future batching systems will manage batches **across the full pipeline**, not just for a single model. A request's lifecycle spans multiple batch schedulers:
+
+- It enters the router model's batch â†’ gets classified â†’ exits
+- It enters the main LLM's batch â†’ generates a response â†’ exits
+- Part of the response triggers a tool call â†’ enters the tool model's batch â†’ exits
+- The full response enters the verifier's batch â†’ approval â†’ returns to user
+
+Each transition is a scheduling event. The global scheduler optimizes end-to-end latency and throughput across all models, not just per-model batch utilization.
+
+---
+
+# The Investor Lens (Aligned with the Inference Framework)
+
+Dynamic batching and token parallelism sit in the **Serving / Runtime Layer** of the inference stack. They are the primary mechanisms that convert raw GPU capability into user-facing throughput and latency â€” the metrics that determine cost-per-token and therefore the entire economics of AI inference.
+
+## The Core Thesis
+
+> **Batching efficiency is the lever that determines whether AI inference is a high-margin or low-margin business. The company that extracts the most useful tokens per GPU-second from the same hardware has a structural cost advantage that compounds with scale. Dynamic batching, speculative decoding, and their successors are the engineering substrate of this advantage.**
+
+## Primary Value Drivers
+
+### 1. The Throughput Gap Is the Margin Gap
+
+Two inference providers running the same model on the same GPU:
+
+- **Provider A**: Basic continuous batching, no speculative decoding. Achieves 800 tokens/sec on an H100.
+- **Provider B**: Continuous batching + speculative decoding + prefix caching + disaggregated serving. Achieves 2,000 tokens/sec on the same H100.
+
+At the same API price per token, Provider B has **2.5Ã— lower compute cost per dollar of revenue**. This translates directly to gross margin:
+
+```
+Provider A: GPU cost $3/hr, revenue at 800 tok/sec = $2.88/hr â†’ margin = -4%
+Provider B: GPU cost $3/hr, revenue at 2000 tok/sec = $7.20/hr â†’ margin = +58%
+```
+
+The difference between a money-losing and a profitable inference business is often just the serving stack's token throughput. Dynamic batching and token parallelism are the two largest contributors to this gap.
+
+**Signal to watch**: Published tokens-per-second-per-GPU benchmarks across providers (Artificial Analysis, independent benchmarks). The provider with the highest throughput at a given latency SLA has the best serving stack, and therefore the best margin structure.
+
+### 2. Continuous Batching Is Fully Commoditized â€” The Next Wave Is Not
+
+Continuous batching (Orca-style iteration-level scheduling) is now open-source table-stakes:
+
+- vLLM: open-source, production-ready
+- SGLang: open-source, competitive
+- TensorRT-LLM: NVIDIA-supported, free
+- llama.cpp: open-source, CPU/GPU hybrid
+
+**No inference provider can claim a moat from continuous batching alone.** The commoditization cascade reached this technique in < 18 months from introduction.
+
+The next wave of batching innovations â€” disaggregated scheduling, adaptive speculative batching, workload-aware batch composition, multi-model pipeline batching â€” is still in the research-to-production transition phase. Companies that ship these first capture a temporary but significant margin advantage (6â€“18 months before open-source catches up).
+
+**Investor takeaway**: When evaluating inference providers, ask: "What scheduling capabilities do you have beyond basic continuous batching?" If the answer is "nothing," their margin is vulnerable. If the answer includes disaggregated prefill/decode, speculative decoding integration, or adaptive batch composition, they have a temporary but real capability lead.
+
+### 3. Token Parallelism Is a GPU Demand Sustainer (Jevons Paradox)
+
+Speculative decoding and MTP make each GPU produce 1.5â€“3Ã— more tokens per second. The naive expectation: demand for GPUs drops because each GPU does more work.
+
+The actual effect (Jevons paradox):
+
+- Lower cost per token â†’ API providers drop prices
+- Lower prices â†’ more applications integrate LLM calls
+- More applications â†’ more total tokens consumed
+- Net: GPU demand increases despite per-GPU efficiency gains
+
+This pattern has repeated with every major serving optimization (continuous batching â†’ PagedAttention â†’ speculative decoding). Each one was predicted to reduce GPU demand. Each one expanded the addressable market instead.
+
+**Investor takeaway**: Do not short GPU infrastructure on the basis of token parallelism improvements. The demand response consistently exceeds the efficiency gain. Token parallelism is bullish for total inference volume, not bearish for hardware demand.
+
+### 4. The Scheduling Layer Becomes the Defensible Moat
+
+As models commoditize (open-weight quality approaching frontier) and hardware access broadens (more ASIC vendors, cloud GPU availability increasing), the remaining differentiation concentrates in the **scheduling and orchestration layer**:
+
+- Which requests to batch together
+- When to speculate vs. decode normally
+- How to route between prefill and decode clusters
+- How to manage KV cache across memory tiers
+- How to compose multi-model pipelines efficiently
+
+This is deeply integrated, compounding engineering â€” not a single algorithm that can be copied from a paper. It requires:
+- Real production traffic data to tune scheduling policies
+- Hardware-specific kernel optimization (different GPUs have different optimal batch sizes)
+- Continuous iteration on dozens of interacting subsystems
+
+**Investor takeaway**: The durable moat in inference is not the model, not the hardware, and not any single optimization. It is the **scheduling and orchestration stack** â€” the accumulated engineering that makes all the pieces work together at production scale. Companies with the deepest integration depth (tight feedback loop between scheduling decisions and real traffic patterns) have the most defensible position.
+
+### 5. Multi-Model Pipeline Batching Creates Platform Lock-In
+
+When a serving platform manages batching across an entire model pipeline (router â†’ LLM â†’ tool models â†’ verifier), switching costs increase dramatically:
+
+- The customer's application is structured around the pipeline's API
+- Latency and throughput are optimized for the specific model combination
+- Moving to another provider requires re-validating the entire pipeline, not just swapping one model
+
+This is the serving-layer equivalent of cloud lock-in. The more models in the pipeline, the stickier the customer.
+
+**Investor takeaway**: Inference platforms evolving from "single model serving" to "multi-model pipeline orchestration" are building structural lock-in. This is the path from commodity per-token pricing to premium platform pricing. Watch for providers announcing pipeline orchestration features (model chaining, conditional routing, tool-call integration) as signals of this strategy.
+
+## Risk Factors
+
+**Risk 1 â€” Architectural obsolescence of autoregressive decoding.** If non-autoregressive models (diffusion LLMs, parallel decoding architectures) reach production quality, the entire continuous batching paradigm changes. These models don't generate one token at a time â€” they refine all tokens simultaneously. The scheduling model shifts from "iteration-level sequence swapping" to something closer to job scheduling. Current batching infrastructure would need fundamental redesign.
+
+**Risk 2 â€” Hardware-specific scheduling creates vendor dependency.** Optimal batch sizes, speculation depths, and prefill chunk sizes vary by GPU/ASIC. A scheduling stack tuned for H100 may perform poorly on Groq LPUs or AMD MI300X. Providers locked into one hardware vendor's optimal scheduling patterns face switching costs and risk if that vendor loses its performance lead.
+
+**Risk 3 â€” Open-source erodes each advantage faster than the last.** The commoditization timeline is accelerating: continuous batching took ~18 months from paper to open-source standard. Speculative decoding is on a ~12-month cycle. Disaggregated serving may be even faster. The margin-advantage window from each innovation is shrinking.
+
+## Summary Signal for Investors
+
+> **Batching and token parallelism are the primary COGS lever for inference businesses.** Every 2Ã— improvement in tokens-per-second-per-GPU translates directly to margin expansion (or price competitiveness). But each optimization commoditizes in 6â€“18 months. The durable advantage belongs not to whoever ships one optimization first, but to whoever builds the deepest, most integrated scheduling stack â€” the "operating system" of inference â€” that continuously absorbs the next innovation fastest. This is an execution moat measured in cumulative engineering depth, not in any single patent or paper.
+
