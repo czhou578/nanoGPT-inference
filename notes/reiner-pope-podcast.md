@@ -190,19 +190,72 @@ $$
 
 Quantization reduces B* because you load weights faster (fewer bytes) so the memory phase finishes sooner, and the compute phase (which doesn't change much — you still do similar FLOPs after dequantization) becomes the bottleneck at a smaller batch size.
 
-### What changes with MoE?
+---
 
-For a Mixtral 8x7B (N_total = 46.7B, N_active = ~12.9B per token):
+# 5. Deep Dive: Mixture of Experts (MoE) from First Principles
+
+Let's break down how a Mixture of Experts (MoE) architecture behaves under this framework, using Mixtral 8x7B as our example.
+
+In a dense model like Llama 3 8B, every parameter is used for every token. Therefore, $N_{\text{active}} = N_{\text{total}}$.
+
+In an MoE model like Mixtral 8x7B:
+- **$N_{\text{total}}$** ≈ 46.7 billion parameters (the entire model size across all experts)
+- **$N_{\text{active}}$** ≈ 12.9 billion parameters (the router only selects 2 out of 8 experts per token)
+
+How does this affect our two clocks?
+
+## The Compute Clock for MoE
+
+Because the routing mechanism acts *per token*, a single token only ever "sees" the parameters of the experts it was routed to. From the perspective of the Tensor Cores doing math, the forward pass looks exactly like a dense model of size 12.9B.
 
 $$
-B^* = \frac{\text{FLOPs}}{\text{Bandwidth}} \times \frac{N_{\text{total}} \times \text{bytes}}{2 \times N_{\text{active}}} = 295 \times \frac{46.7}{2 \times 12.9} \approx 534
+t_{\text{compute}} \approx \frac{B \times 2 \times 12.9 \times 10^9}{\text{FLOPs}_{\text{peak}}}
 $$
 
-MoE **increases** B* because you load many more parameters than you compute with (all experts loaded, only 2 used). This means MoE models stay in the memory-bound regime at larger batch sizes — which is actually beneficial because it means you can serve more concurrent users before hitting the compute wall.
+The amount of compute required is relatively small—equivalent to a ~13B parameter model.
+
+## The Memory Clock for MoE
+
+Here is the catch: when we have a batch of sequences ($B > 1$), each token in the batch might be routed to a *different* set of experts.
+- Token 1 goes to Experts A and B.
+- Token 2 goes to Experts C and D.
+- Token 3 goes to Experts A and E.
+...and so on.
+
+As the batch size increases even slightly, the probability approaches 100% that *every* expert will be needed by at least one token in the batch.
+Therefore, the GPU must load **all** the experts—the entire 46.7B parameters—from HBM into the compute units for the batch forward pass.
+
+$$
+t_{\text{memory}} = \frac{46.7 \times 10^9 \times \text{bytes per param}}{\text{HBM Bandwidth}}
+$$
+
+The time to load the weights is massive—equivalent to a ~47B parameter model.
+
+## The Asymmetry and $B^*$
+
+MoE introduces a severe asymmetry: we are paying the **memory loading cost of a 47B model**, but only doing the **compute math of a 13B model**.
+
+Because we are doing so little math relative to the sheer volume of data loaded, the GPU stays memory-bound for much longer. We can compute $B^*$ for Mixtral 8x7B on an H100 (FP16):
+
+$$
+B^* = \frac{\text{FLOPs}}{\text{Bandwidth}} \times \frac{N_{\text{total}} \times \text{bytes per param}}{2 \times N_{\text{active}}}
+$$
+
+$$
+B^* = 295 \times \frac{46.7 \times 2}{2 \times 12.9} \approx 534
+$$
+
+### Why is this theoretically incredible?
+
+For a dense model of equivalent active size (~13B), you would load 13B parameters and compute 13B parameters. You would hit the compute wall much earlier. Once you hit the compute wall, adding more users slows down generation for everyone.
+
+Because the MoE model has $B^* \approx 534$, you can theoretically pack **534 concurrent users** into a single batch, and the GPU will *still* just be waiting on memory. Adding users 1 through 533 is entirely "free" throughput because the memory clock was the bottleneck anyway. You are just squeezing more utilization out of the idle Tensor Cores while the HBM bandwidth is doing its job.
+
+This is why MoE is the architecture of choice for serving large user bases: it dramatically raises the arithmetic intensity ceiling by decoupling the memory footprint from the active compute.
 
 ---
 
-# 5. The Throughput Equation
+# 6. The Throughput Equation
 
 Tokens per second for the whole batch:
 
@@ -245,7 +298,7 @@ Throughput (tok/s)
 
 ---
 
-# 6. The KV Cache Complication
+# 7. The KV Cache Complication
 
 The equations above model **weight loading** only. But during decode, the GPU also loads the **KV cache** for attention computation. This adds a second memory term:
 
@@ -267,7 +320,7 @@ This is why long-context inference is so much harder — the KV cache breaks the
 
 ---
 
-# 7. Why This Framework Matters: The Three Regimes of Inference Economics
+# 8. Why This Framework Matters: The Three Regimes of Inference Economics
 
 | Regime | Condition | Bottleneck | What to optimize | $/token dominated by |
 |---|---|---|---|---|
@@ -285,7 +338,7 @@ Most real-world **interactive decode** (chatbots, copilots) operates at B = 10�
 
 ---
 
-# 8. The Hardware Selection Insight
+# 9. The Hardware Selection Insight
 
 The ratio FLOPs / Bandwidth (sometimes called the **Machine Balance** or **Arithmetic Intensity Ceiling**) is the single most important number when evaluating inference hardware:
 
@@ -306,7 +359,7 @@ Notice:
 
 ---
 
-# 9. Summary: From One Equation to the Whole Inference Cost Structure
+# 10. Summary: From One Equation to the Whole Inference Cost Structure
 
 Pope's equation $t_{\text{compute}} = \frac{B \cdot N_{\text{active}}}{\text{FLOPs}}$ is deceptively simple, but it establishes half of the roofline model for inference:
 
