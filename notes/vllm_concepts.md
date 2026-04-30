@@ -176,7 +176,18 @@ Client (HTTP)
 Background asyncio task (output_handler):
   └─ engine_core.get_output_async()             # pulls from EngineCore
        └─ output_processor.process_outputs()    # fan-out to per-request generators
+
+Process 2: EngineCore (subprocess)
+────────────────────────────────────
+  Runs the scheduler + GPU workers in a loop
+  (add_request_async just feeds the scheduler's waiting queue)
 ```
+
+✅ add_request_async() — sends the request over an IPC/multiprocessing queue to the EngineCore subprocess. In that subprocess, it goes into the scheduler's waiting queue.
+
+✅ output_handler is the background asyncio task — but it is getting outputs already processed by the GPU worker, not dispatching work to workers. The worker dispatch happens entirely inside the EngineCore subprocess.
+
+⚠️ process_outputs() is not what gives requests to workers — it's the fan-out step that distributes the GPU's results back to each request's RequestOutputCollector. The EngineCore worker already ran the forward pass; process_outputs just routes the token results to the right generate() caller.
 
 ### `v1/engine/async_llm.py` — the async batching pump
 
@@ -193,6 +204,51 @@ async def output_handler():
 ```
 
 Multiple concurrent `generate()` calls add requests to the **same** EngineCore queue. The scheduler drains it opportunistically every step.
+
+### What is an asyncio event loop tick?
+
+One tick = one full cycle of the event loop's internal `_run_once()` call. Each cycle does exactly three things, in order:
+
+1. **Poll for I/O** — the loop asks the OS (via `epoll`/`kqueue`) whether any file descriptors are ready (sockets, pipes, multiprocessing queues, etc.), waiting up to a computed timeout.
+2. **Fire callbacks** — every callback that is now ready (I/O completions, `call_soon` entries, expired `call_later` timers) is executed **one at a time, to completion**. No two callbacks overlap.
+3. **Advance coroutines** — any `await`-suspended coroutine whose awaitable just resolved is resumed and runs until it hits its next `await` (or finishes).
+
+Then the loop goes back to step 1.
+
+**Critical rule:** asyncio is **single-threaded and cooperative**. A coroutine runs uninterrupted from one `await` to the next. There is no preemption — if a coroutine doesn't `await`, it holds the entire loop hostage.
+
+#### How `await asyncio.sleep(0)` fits in
+
+```python
+# output_handler — async_llm.py lines 634-704
+for start in range(0, num_outputs, chunk_size):
+    output_processor.process_outputs(outputs_slice, ...)
+    if end < num_outputs:
+        await asyncio.sleep(0)   # ← explicit yield
+```
+
+`asyncio.sleep(0)` suspends the current coroutine and re-queues it at the **end** of the ready queue. This gives every other coroutine (`generate()` loops, HTTP response writers, health check handlers) a chance to run before `output_handler` picks up the next chunk. Without this yield, a large batch (e.g. 256 outputs) would be processed in one uninterrupted CPU burst, making the HTTP server unresponsive for the duration.
+
+#### What "between chunks" means concretely
+
+```
+Tick N:
+  output_handler processes chunk 0..31  →  hits await asyncio.sleep(0)
+    └─ 32× RequestOutputCollectors are set, asyncio.Events fired
+
+Tick N+1:
+  generate() for req 0  →  q.get() unblocks, yields token to HTTP caller
+  generate() for req 1  →  same
+  ...
+  generate() for req 31 →  same
+  output_handler resumes →  processes chunk 32..63
+
+Tick N+2:
+  generate() for req 32..63 unblocks
+  ...
+```
+
+Each `await asyncio.sleep(0)` boundary is a tick boundary — the point where the loop checks for newly-ready coroutines before continuing. This is why the chunk size (`VLLM_V1_OUTPUT_PROC_CHUNK_SIZE`) matters: larger chunks mean fewer yields per batch, which improves throughput but increases the latency before any `generate()` caller sees its token.
 
 ### `v1/core/sched/scheduler.py` — the continuous batching scheduler
 
@@ -322,7 +378,46 @@ In summary: you always recompute at least the last token to get logits, and the 
 
 **Short answer: it's a cap on the total number of tokens the GPU processes in a single forward pass, shared across every active request in the batch.**
 
-#### Why a budget at all?
+#### Why does the budget exist? (The three root causes)
+
+There are three distinct reasons, and all three apply simultaneously. The first is a hard physical limit; the other two are scheduling/correctness concerns.
+
+---
+
+**Root cause 1 — Static GPU buffer pre-allocation (the hard wall)**
+
+At startup, vLLM allocates all the GPU tensors a forward pass needs — `input_ids`, `position_ids`, the block table, attention bias, etc. — at a fixed size:
+
+```python
+# gpu_input_batch.py line 103
+self.max_num_batched_tokens = max_num_batched_tokens
+# input_ids tensor, position tensors, block tables, etc. are all
+# pre-allocated to this fixed size to avoid dynamic allocation at runtime.
+```
+
+These buffers are **not grown on demand**. If the scheduler tried to hand the worker more tokens than `max_num_batched_tokens`, it would write past the end of a pre-allocated tensor — which is a CUDA OOM error (or worse, silent memory corruption). This is the primary reason the budget exists: **it is not a soft policy, it is a hard ceiling enforced by statically-sized GPU memory**.
+
+Dynamic allocation (calling `torch.empty(...)` every step) was explicitly rejected because it would cause memory fragmentation and non-deterministic allocation latencies. The fixed-size approach makes memory usage predictable and avoids GPU allocator pressure on the critical path.
+
+---
+
+**Root cause 2 — Step latency and decode starvation**
+
+More tokens per forward pass = more FLOPs in that pass = longer wall-clock step time. If a single massive prefill (say, 64K tokens) were allowed to fill the entire GPU in one go with no cap, it would monopolize the GPU for potentially hundreds of milliseconds — during which **every decode request is frozen**. Users waiting for the next streamed token of their ongoing generation would see a full stop.
+
+The budget (combined with `long_prefill_token_threshold`) ensures decode requests always get scheduled first and consume their 1-token-per-request share of the budget before any prefill gets the remainder. Without this, one long prefill could starve the entire decode population — not because of OOM, but because of time.
+
+---
+
+**Root cause 3 — KV block pool exhaustion**
+
+Scheduling more tokens also means allocating more KV blocks. If the scheduler could admit unlimited tokens per step, it could exhaust the entire KV pool in a single round, leaving no blocks for requests already mid-decode. This would force immediate preemption of running requests — evicting their KV state and requiring recomputation — which is expensive.
+
+The budget functions as an indirect throttle on KV block consumption rate: since you can only schedule `max_num_scheduled_tokens` tokens per step, you can only consume at most that many new token-slots worth of KV blocks per step. This keeps the pool from cliff-diving.
+
+---
+
+#### Why a budget at all? (compute angle)
 
 The GPU doesn't care how many *sequences* are in a batch — it cares about how many *tokens* it has to process. The matrix multiplications inside each transformer layer are proportional to the total token count across all requests, not to the number of distinct sequences. More total tokens → more compute → longer step time.
 
