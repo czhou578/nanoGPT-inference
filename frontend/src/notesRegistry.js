@@ -33,10 +33,10 @@ export const categories = [
   { id: 'investor-framework', name: 'Investor Framework', icon: '💰' },
   { id: 'api-pricing', name: 'API Pricing & Inference Economics', icon: '💲' },
   // Placeholder categories (no files yet)
-  { id: 'token-parallelism', name: 'Token Parallelism', icon: '🧩', placeholder: true },
-  { id: 'fp8-kernels', name: 'FP8 Kernels', icon: '🔢', placeholder: true },
-  { id: 'async-prefill', name: 'Asynchronous Prefill', icon: '🚀', placeholder: true },
-  { id: 'early-exit-heads', name: 'Early Exit Heads', icon: '🚪', placeholder: true },
+  { id: 'token-parallelism', name: 'Token Parallelism', icon: '🧩' },
+  { id: 'fp8-kernels', name: 'FP8 Kernels', icon: '🔢' },
+  { id: 'async-prefill', name: 'Asynchronous Prefill', icon: '🚀' },
+  { id: 'early-exit-heads', name: 'Early Exit Heads', icon: '🚪' },
   { id: 'context-window-streaming', name: 'Context Window Streaming', icon: '🪟', placeholder: true },
 ];
 
@@ -57,12 +57,18 @@ const fileMapping = {
   'gpu-cpu-overlap.md': 'gpu-cpu-overlap',
   'request-coalescing.md': 'request-coalescing',
   'disaggregated-prefill-decode.md': 'disaggregated-prefill',
+  'async-prefill.md': 'async-prefill',
   'LLM Inference Latency_ TTFT, ITL, E2E Explained.md': 'latency-metrics',
   'HBM vs SRAM_ Memory Fundamentals Compared.md': 'hardware-fundamentals',
   'reiner-pope-podcast.md': 'roofline-model',
+  't-mem.md': 'roofline-model',
   'vllm_concepts.md': 'vllm-internals',
   'investor.md': 'investor-framework',
   'api-pricing-inference-costs.md': 'api-pricing',
+  'open-source-economics.md': 'api-pricing',
+  'token-parallelism.md': 'token-parallelism',
+  'fp8-kernels.md': 'fp8-kernels',
+  'early-exit-heads.md': 'early-exit-heads',
 };
 
 // Files to exclude from the knowledge base
