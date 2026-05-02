@@ -4,14 +4,10 @@ import { getCategoriesWithNotes } from './notesRegistry';
 
 function Sidebar({ isOpen, onClose }) {
   const [search, setSearch] = useState('');
-  const [expanded, setExpanded] = useState({});
   const location = useLocation();
   const categoriesWithNotes = getCategoriesWithNotes();
 
-  const toggleCategory = (id) => {
-    setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
-  };
-
+  // Build a flat list of articles, filtered by search, grouped under category labels
   const filteredCategories = categoriesWithNotes.map(cat => ({
     ...cat,
     notes: cat.notes.filter(note =>
@@ -44,25 +40,16 @@ function Sidebar({ isOpen, onClose }) {
       <nav className="sidebar-nav">
         {filteredCategories.map(cat => (
           <div key={cat.id} className="nav-category">
-            <button
-              className={`nav-category-header ${expanded[cat.id] ? 'expanded' : ''}`}
-              onClick={() => !cat.placeholder && toggleCategory(cat.id)}
-              disabled={cat.placeholder}
-            >
+            <div className="nav-category-label">
               <span className="nav-category-icon">{cat.icon}</span>
               <span className="nav-category-name">{cat.name}</span>
-              {cat.placeholder ? (
+              {cat.placeholder && (
                 <span className="coming-soon-badge">Soon</span>
-              ) : (
-                <>
-                  <span className="nav-category-count">{cat.notes.length}</span>
-                  <span className="nav-chevron">{expanded[cat.id] ? '▾' : '▸'}</span>
-                </>
               )}
-            </button>
+            </div>
 
-            {expanded[cat.id] && !cat.placeholder && (
-              <div className="nav-articles">
+            {!cat.placeholder && (
+              <div className="nav-articles nav-articles-flat">
                 {cat.notes.map(note => (
                   <NavLink
                     key={note.slug}

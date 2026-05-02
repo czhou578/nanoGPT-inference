@@ -37,7 +37,7 @@ export const categories = [
   { id: 'fp8-kernels', name: 'FP8 Kernels', icon: '🔢' },
   { id: 'async-prefill', name: 'Asynchronous Prefill', icon: '🚀' },
   { id: 'early-exit-heads', name: 'Early Exit Heads', icon: '🚪' },
-  { id: 'context-window-streaming', name: 'Context Window Streaming', icon: '🪟', placeholder: true },
+  { id: 'context-window-streaming', name: 'Context Window Streaming', icon: '🪟' },
 ];
 
 // ── File → Category mapping ──────────────────────────────────────────────────
@@ -69,6 +69,7 @@ const fileMapping = {
   'token-parallelism.md': 'token-parallelism',
   'fp8-kernels.md': 'fp8-kernels',
   'early-exit-heads.md': 'early-exit-heads',
+  'context-window-streaming.md': 'context-window-streaming',
 };
 
 // Files to exclude from the knowledge base
