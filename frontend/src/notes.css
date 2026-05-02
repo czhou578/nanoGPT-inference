@@ -196,40 +196,27 @@
 }
 
 .nav-category {
-  margin-bottom: 2px;
+  margin-bottom: var(--space-xs);
 }
 
-.nav-category-header {
+.nav-category-label {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
   width: 100%;
-  padding: var(--space-sm) var(--space-lg);
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  text-align: left;
-  transition: all var(--transition-fast);
-}
-
-.nav-category-header:not(:disabled):hover {
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-}
-
-.nav-category-header:disabled {
-  cursor: default;
-  opacity: 0.6;
+  padding: 6px var(--space-lg);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  user-select: none;
 }
 
 .nav-category-icon {
-  font-size: 15px;
+  font-size: 13px;
   flex-shrink: 0;
-  width: 22px;
+  width: 18px;
   text-align: center;
 }
 
@@ -238,22 +225,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.nav-category-count {
-  font-size: 11px;
-  color: var(--text-muted);
-  background: var(--bg-elevated);
-  padding: 1px 6px;
-  border-radius: 10px;
-  flex-shrink: 0;
-}
-
-.nav-chevron {
-  font-size: 10px;
-  color: var(--text-muted);
-  flex-shrink: 0;
-  transition: transform var(--transition-fast);
 }
 
 .coming-soon-badge {
@@ -268,23 +239,17 @@
   flex-shrink: 0;
 }
 
-/* Nested article links */
-.nav-articles {
-  padding: var(--space-xs) 0 var(--space-sm);
-  animation: fadeSlideDown 200ms ease;
-}
-
-@keyframes fadeSlideDown {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: translateY(0); }
+/* Article links — always visible (flat list) */
+.nav-articles-flat {
+  padding: 0 0 var(--space-sm);
 }
 
 .nav-article-link {
   display: block;
-  padding: 5px var(--space-lg) 5px calc(var(--space-lg) + 30px);
-  color: var(--text-muted);
+  padding: 5px var(--space-lg) 5px calc(var(--space-lg) + 26px);
+  color: var(--text-secondary);
   text-decoration: none;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   transition: all var(--transition-fast);
   border-left: 2px solid transparent;
