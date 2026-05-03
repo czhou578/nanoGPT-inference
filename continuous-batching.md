@@ -17,6 +17,8 @@ Ask yourself: **if request 0 finishes after 20 tokens but request 1 needs 100, w
 
 ---
 
+Row 0 is evicted from the batch, and request 1 continues to generate tokens.
+
 ## Hint 2: The KV cache is the hard part
 
 Your `Head.key_cache` has shape `(B, T, hs)` — one contiguous tensor for the whole batch. With continuous batching, different requests have different sequence lengths. You have two options to think through:
@@ -27,6 +29,8 @@ Your `Head.key_cache` has shape `(B, T, hs)` — one contiguous tensor for the w
 Think about which approach is simpler to implement and which matches what vLLM does (hint: vLLM does neither — it uses paged blocks — but for a first pass, one of the above is fine).
 
 ---
+
+KV Cache needs to be per batch, not per head. 
 
 ## Hint 3: The scheduler loop replaces the `for step in range(max_new_tokens)` loop
 
@@ -45,6 +49,19 @@ while there are active requests OR the waiting queue is non-empty:
 The key insight: **step 1 and step 5 happen every iteration**, not just at the start and end. Requests flow in and out continuously.
 
 ---
+
+Could we use torch.zeroes? What's the difference?
+Is this only for one request?
+- No, for entire batch 
+What does ~full mask mean?
+
+ - python's bitwise not operator. On a bool tensor, it flips every value. 
+
+ full_mask  = [False, False, True, True, True]
+~full_mask = [True,  True,  False, False, False]
+everywhere the mask says False (= padding), replace the attention score with -inf."
+
+
 
 ## Hint 4: Think about what changes in `forward()`
 
