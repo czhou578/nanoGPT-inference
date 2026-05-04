@@ -62,6 +62,17 @@ What does ~full mask mean?
 everywhere the mask says False (= padding), replace the attention score with -inf."
 
 
+Notes:
+
+In standard batching, all computations happen on a massive, unified tensor. A standard attention head expects its cached Keys (K) and Values (V) to arrive perfectly stacked in a block shaped like: [Batch Size (B), Sequence Length (T), Head Size (hs)]
+
+However, by moving to a request-level continuous batching system (Hint 1 & 2 in your notebook), we scattered our KV caches. Now:
+
+The KV Cache is fragmented: Instead of the model holding one huge block, each individual request holds a bunch of tiny blocks (1, T, hs) in a dictionary.
+Asymmetrical sequences: Because requests arrive at different times and have different prompt lengths, their cached sequences are all different lengths (e.g., Request A has T=50, Request B has T=15).
+The triple for loop's job is to act as a "packing plant": It gathers all those individual fragments, lines them up, pads the short ones so they are uniform, and squishes them perfectly back into the exact [B, T_max, hs] multidimensional block the model expects.
+
+
 
 ## Hint 4: Think about what changes in `forward()`
 
