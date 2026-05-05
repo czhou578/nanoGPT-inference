@@ -74,6 +74,23 @@ The triple for loop's job is to act as a "packing plant": It gathers all those i
 
 torch.cat expects list of tensors, not list of python ints.
 
+## Steps
+
+1. Check if any new requests have arrived
+2. Grab new requests if any
+3. Prefill new requests and get logits / predictions for first token
+4. Store new kv in request's kv cache
+5. Forward pass to get next token idx
+6. Set status of request to active or done if done
+7. Assemble batch from active requests
+8. Get logits for next token
+9. Sample next token for each request
+10. Store new kv in request's kv cache
+11. Set status of request to active or done if done
+12. Repeat until all requests are done
+
+
+
 ==================================
 
 for i, req in enumerate(active_requests):
