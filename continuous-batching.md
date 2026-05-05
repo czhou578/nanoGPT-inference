@@ -72,7 +72,13 @@ The KV Cache is fragmented: Instead of the model holding one huge block, each in
 Asymmetrical sequences: Because requests arrive at different times and have different prompt lengths, their cached sequences are all different lengths (e.g., Request A has T=50, Request B has T=15).
 The triple for loop's job is to act as a "packing plant": It gathers all those individual fragments, lines them up, pads the short ones so they are uniform, and squishes them perfectly back into the exact [B, T_max, hs] multidimensional block the model expects.
 
+torch.cat expects list of tensors, not list of python ints.
 
+==================================
+
+for i, req in enumerate(active_requests):
+    req.generated_tokens.append(idx_next[i].item())
+    req._last_token = idx_next[i : i + 1]
 
 ## Hint 4: Think about what changes in `forward()`
 
