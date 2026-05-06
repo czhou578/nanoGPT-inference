@@ -204,3 +204,12 @@ Multiple requests arriving at different times with different prompt lengths. Som
 | Batch assembly | Handle rows with different token counts (chunk vs single decode token) |
 | `assemble_batch_cache` | May need to handle requests with partial caches |
 | `Head` / model | **Nothing** — the forward pass already supports variable-length inputs with past caches |
+
+
+==================Notes===========================
+
+Storing cache in Head means that every sequence in the batch is supposed to finish at the same time. But padding can get confusing
+since the difference in generation positions for each sequence is very big. 
+
+Better for model to not worry about cache manipulation. Treat the KV cache as a black box (input, update, output).
+

@@ -89,8 +89,6 @@ torch.cat expects list of tensors, not list of python ints.
 11. Set status of request to active or done if done
 12. Repeat until all requests are done
 
-
-
 ==================================
 
 for i, req in enumerate(active_requests):
