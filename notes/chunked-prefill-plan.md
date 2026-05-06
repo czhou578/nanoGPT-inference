@@ -68,6 +68,19 @@ Next step:  process prompt[13:25] → 12 prefill tokens (+ 3 decode = 15 ≤ 16 
 Step after: request is fully prefilled, sample first token, joins decode batch
 ```
 
+remaining_budget = token_budget - len(active_requests)
+                 = 16 - 3
+                 = 13 tokens available for prefill
+
+tokens_left      = len(req_A.prompt_tokens) - req_A.prefill_cursor
+                 = 20 - 0
+                 = 20 tokens still need processing
+
+chunk_size       = min(remaining_budget, tokens_left)
+                 = min(13, 20)
+                 = 13
+
+
 **Key insight:** Each "row" in the batch can have a different number of tokens. One row might be a 13-token prefill chunk, another might be a 1-token decode. You already handle variable lengths with padding in `assemble_batch_cache` — the same idea applies here.
 
 ---
