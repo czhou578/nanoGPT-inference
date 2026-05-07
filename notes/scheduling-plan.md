@@ -33,6 +33,8 @@ Your queue currently uses a list that you iterate with `queue_idx`. Think about 
 
 ---
 
+1. The one that has the fewer tokens left
+
 ## Hint 2: Build a Proper Scheduler Class
 
 Instead of inline scheduler logic inside `generate()`, extract it into a `Scheduler` class. This keeps the generate loop clean and makes it easy to swap policies.
