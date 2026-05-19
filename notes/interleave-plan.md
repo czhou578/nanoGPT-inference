@@ -174,6 +174,253 @@ def forward(self, x, past_k=None, past_v=None, attn_mask=None):
 
 > **⚠️ This is the only model-level change.** Everything else is pure Python scheduling logic.
 
+Viewed interleave-plan.md:137-160
+
+Here is a step-by-step graphical visualization of how the tensors transform. 
+
+Let's use a concrete example where:
+* **`T_past = 4`** (We have 4 tokens previously processed in the KV cache)
+* **`T = 3`** (We are processing a chunk of 3 new tokens in the current step)
+* **`T_full = 7`** (`T_past + T`)
+* **`B = 2`** (Batch size of 2)
+
+I will use `██` for **True** (allowed to attend) and `░░` for **False** (masked out/prevented from attending).
+
+---
+
+### Step 1: Initialize all-True mask
+```python
+causal_mask = torch.ones(T, T_full, device=x.device, dtype=torch.bool)
+```
+We start with a shape of `(3, 7)`. Initially, every new token is allowed to look at every token in the entire `T_full` sequence.
+```text
+                 Past Tokens (T_past)       New Tokens (T)
+                 0    1    2    3         0    1    2
+New Token 0   [ ██ , ██ , ██ , ██    |   ██ , ██ , ██ ]
+New Token 1   [ ██ , ██ , ██ , ██    |   ██ , ██ , ██ ]
+New Token 2   [ ██ , ██ , ██ , ██    |   ██ , ██ , ██ ]
+```
+
+### Step 2: Grab the lower-triangular mask
+```python
+new_token_mask = self.tril[:T, :T] 
+```
+We grab a `(3, 3)` square matrix. This enforces the rule: "Token 0 can only see Token 0. Token 1 can see Tokens 0 & 1. Token 2 can see Tokens 0, 1, & 2."
+```text
+                 New Tokens (T)
+                 0    1    2
+New Token 0   [ ██ , ░░ , ░░ ]
+New Token 1   [ ██ , ██ , ░░ ]
+New Token 2   [ ██ , ██ , ██ ]
+```
+
+### Step 3: Apply the lower-triangular mask to the right side
+```python
+causal_mask[:, -T:] = new_token_mask 
+```
+We take the `(3, 3)` matrix from Step 2 and paste it over the rightmost 3 columns (`-T:`) of the `causal_mask` from Step 1. The past tokens remain untouched (all `True`).
+```text
+                 Past Tokens (T_past)       New Tokens (T)
+                 0    1    2    3         0    1    2
+New Token 0   [ ██ , ██ , ██ , ██    |   ██ , ░░ , ░░ ]
+New Token 1   [ ██ , ██ , ██ , ██    |   ██ , ██ , ░░ ]
+New Token 2   [ ██ , ██ , ██ , ██    |   ██ , ██ , ██ ]
+```
+*Notice how Token 0 can look at all past tokens + itself, but is blocked from looking at future tokens 1 and 2.*
+
+### Step 4: Expand for the Batch Dimension
+```python
+causal_mask = causal_mask.unsqueeze(0).expand(B, -1, -1)
+```
+Right now, `causal_mask` is just a 2D grid of shape `(T, T_full)`. But our attention weights `wei` have a shape of `(B, T, T_full)`. 
+
+1. **`unsqueeze(0)`**: Adds a batch dimension to the front, changing the shape to `(1, 3, 7)`.
+2. **`expand(B, -1, -1)`**: Broadcasts that single mask across the entire batch (size `B=2`), creating a final shape of `(2, 3, 7)`. It effectively duplicates the mask so every sequence in the batch uses it.
+
+```text
+Batch Item 0 (e.g., Sequence A)
+                 Past Tokens (T_past)       New Tokens (T)
+                 0    1    2    3         0    1    2
+New Token 0   [ ██ , ██ , ██ , ██    |   ██ , ░░ , ░░ ]
+New Token 1   [ ██ , ██ , ██ , ██    |   ██ , ██ , ░░ ]
+New Token 2   [ ██ , ██ , ██ , ██    |   ██ , ██ , ██ ]
+
+-----------------------------------------------------------
+
+[ignoring loop detection]
+
+Here is a step-by-step graphical visualization of how the tensors transform. 
+
+Let's use a concrete example where:
+* **`T_past = 4`** (We have 4 tokens previously processed in the KV cache)
+* **`T = 3`** (We are processing a chunk of 3 new tokens in the current step)
+* **`T_full = 7`** (`T_past + T`)
+* **`B = 2`** (Batch size of 2)
+
+I will use `T` for **True** (allowed to attend) and `F` for **False** (masked out/prevented from attending).
+
+---
+
+### Step 1: Initialize all-True mask
+```python
+causal_mask = torch.ones(T, T_full, device=x.device, dtype=torch.bool)
+```
+We start with a shape of `(3, 7)`. Initially, every new token is allowed to look at every token in the entire `T_full` sequence.
+```text
+                 Past Tokens (T_past)       New Tokens (T)
+                 0    1    2    3         0    1    2
+New Token 0   [  T ,  T ,  T ,  T    |    T ,  T ,  T ]
+New Token 1   [  T ,  T ,  T ,  T    |    T ,  T ,  T ]
+New Token 2   [  T ,  T ,  T ,  T    |    T ,  T ,  T ]
+```
+
+### Step 2: Grab the lower-triangular mask
+```python
+new_token_mask = self.tril[:T, :T] 
+```
+We grab a `(3, 3)` square matrix. This enforces the rule: "Token 0 can only see Token 0. Token 1 can see Tokens 0 & 1. Token 2 can see Tokens 0, 1, & 2."
+```text
+                 New Tokens (T)
+                 0    1    2
+New Token 0   [  T ,  F ,  F ]
+New Token 1   [  T ,  T ,  F ]
+New Token 2   [  T ,  T ,  T ]
+```
+
+### Step 3: Apply the lower-triangular mask to the right side
+```python
+causal_mask[:, -T:] = new_token_mask 
+```
+We take the `(3, 3)` matrix from Step 2 and paste it over the rightmost 3 columns (`-T:`) of the `causal_mask` from Step 1. The past tokens remain untouched (all `True`).
+```text
+                 Past Tokens (T_past)       New Tokens (T)
+                 0    1    2    3         0    1    2
+New Token 0   [  T ,  T ,  T ,  T    |    T ,  F ,  F ]
+New Token 1   [  T ,  T ,  T ,  T    |    T ,  T ,  F ]
+New Token 2   [  T ,  T ,  T ,  T    |    T ,  T ,  T ]
+```
+*Notice how Token 0 can look at all past tokens + itself, but is blocked from looking at future tokens 1 and 2.*
+
+### Step 4: Expand for the Batch Dimension
+```python
+causal_mask = causal_mask.unsqueeze(0).expand(B, -1, -1)
+```
+Right now, `causal_mask` is just a 2D grid of shape `(T, T_full)`. But our attention weights `wei` have a shape of `(B, T, T_full)`. 
+
+1. **`unsqueeze(0)`**: Adds a batch dimension to the front, changing the shape to `(1, 3, 7)`.
+2. **`expand(B, -1, -1)`**: Broadcasts that single mask across the entire batch (size `B=2`), creating a final shape of `(2, 3, 7)`. It effectively duplicates the mask so every sequence in the batch uses it.
+
+```text
+Batch Item 0 (e.g., Sequence A)
+                 Past Tokens (T_past)       New Tokens (T)
+                 0    1    2    3         0    1    2
+New Token 0   [  T ,  T ,  T ,  T    |    T ,  F ,  F ]
+New Token 1   [  T ,  T ,  T ,  T    |    T ,  T ,  F ]
+New Token 2   [  T ,  T ,  T ,  T    |    T ,  T ,  T ]
+
+-----------------------------------------------------------
+Batch Item 1 (e.g., Sequence B)
+                 Past Tokens (T_past)       New Tokens (T)
+                 0    1    2    3         0    1    2
+New Token 0   [  T ,  T ,  T ,  T    |    T ,  F ,  F ]
+New Token 1   [  T ,  T ,  T ,  T    |    T ,  T ,  F ]
+New Token 2   [  T ,  T ,  T ,  T    |    T ,  T ,  T ]
+```
+
+Later on, when this `causal_mask` is combined with the `attn_mask` (which handles padding across the batch), any positions corresponding to padding in Batch Item 0 or 1 will also be set to `F`.
+
+=============================================================
+
+
+Edited interleave-plan.md
+Viewed interleave-plan.md:143-169
+
+[ignoring loop detection]
+
+Here is a graphical explanation of how the padding mask (`attn_mask`) is integrated with the `causal_mask`. 
+
+This step handles the fact that in a batch, some sequences might be shorter than others and have been padded with empty tokens in their KV cache history. The model must be prevented from paying attention to these meaningless padded tokens.
+
+Let's build on the previous example:
+* **`T_past = 4`**
+* **`T = 3`**
+* **`B = 2`**
+
+Imagine our batch has two sequences with different past histories:
+* **Sequence A** (Batch Item 0): Only has **2 real tokens** in the past cache, and **2 padding tokens** (left-padded).
+* **Sequence B** (Batch Item 1): Has **4 real tokens** in the past cache (no padding).
+
+### Step 1: The Input `attn_mask`
+The `attn_mask` passed into the forward pass only covers the *past* tokens (`T_past`). It has shape `(B, 1, T_past)`.
+```text
+                 Past Tokens (T_past)
+                 0    1    2    3    
+Sequence A    [  F ,  F ,  T ,  T ]   <-- Positions 0 and 1 are padding!
+Sequence B    [  T ,  T ,  T ,  T ]   <-- All valid tokens
+```
+
+### Step 2: Create `new_valid`
+```python
+new_valid = torch.ones(B, 1, T, device=x.device, dtype=torch.bool)
+```
+The code assumes all new tokens being passed in are valid for the purpose of this specific mask step. We create an all-`True` mask of shape `(2, 1, 3)` for the new chunk.
+```text
+                 New Tokens (T)
+                 0    1    2
+Sequence A    [  T ,  T ,  T ]
+Sequence B    [  T ,  T ,  T ]
+```
+
+### Step 3: Concatenate to make `full_pad_mask`
+```python
+full_pad_mask = torch.cat([attn_mask, new_valid], dim=-1)  # (B, 1, T_full)
+```
+We stick them together horizontally to get a mask that covers the entire `T_full` (7 tokens).
+```text
+                 Past Tokens (T_past)       New Tokens (T)
+                 0    1    2    3         0    1    2
+Sequence A    [  F ,  F ,  T ,  T    |    T ,  T ,  T ]
+Sequence B    [  T ,  T ,  T ,  T    |    T ,  T ,  T ]
+```
+
+### Step 4: Logical AND with the `causal_mask`
+```python
+causal_mask = causal_mask & full_pad_mask
+```
+Now, we overlay (Logical AND) this padding mask onto the `causal_mask` we built earlier. 
+
+* If a position is `T` in both, it stays `T`. 
+* If a position is `F` in either mask, it becomes `F`.
+
+Because `full_pad_mask` has a dimension of `1` in the middle `(B, 1, T_full)`, PyTorch automatically broadcasts (copies) it downwards across all `T` rows of the causal mask.
+
+Here is the final result:
+
+```text
+Batch Item 0 (Sequence A - Has Padding)
+                 Past Tokens (T_past)       New Tokens (T)
+                 0    1    2    3         0    1    2
+New Token 0   [  F ,  F ,  T ,  T    |    T ,  F ,  F ]
+New Token 1   [  F ,  F ,  T ,  T    |    T ,  T ,  F ]
+New Token 2   [  F ,  F ,  T ,  T    |    T ,  T ,  T ]
+                ^^^^^^^^
+           (Padding is completely blocked from attention)
+
+-----------------------------------------------------------
+Batch Item 1 (Sequence B - No Padding)
+                 Past Tokens (T_past)       New Tokens (T)
+                 0    1    2    3         0    1    2
+New Token 0   [  T ,  T ,  T ,  T    |    T ,  F ,  F ]
+New Token 1   [  T ,  T ,  T ,  T    |    T ,  T ,  F ]
+New Token 2   [  T ,  T ,  T ,  T    |    T ,  T ,  T ]
+                ^^^^^^^^
+           (All past tokens remain attendable)
+```
+
+**Why this matters:** Without this step, `New Token 0` in Sequence A would average in the values of the empty padding tokens at indices 0 and 1, which would completely corrupt the model's predictions.
+
+*(Note: If you have left-padded tokens in the new `T` tokens themselves during a fused decode-prefill batch, as mentioned in "Gotchas" #2 of your plan, you would also need to ensure those specific left-padded positions in the new `T` chunk are set to `False` in the mask, rather than using an all-`True` `new_valid` mask.)*
+
 ---
 
 ## Hint 5: The Fused Scheduler Loop
