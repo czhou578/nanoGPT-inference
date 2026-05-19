@@ -174,6 +174,18 @@ def forward(self, x, past_k=None, past_v=None, attn_mask=None):
 
 > **⚠️ This is the only model-level change.** Everything else is pure Python scheduling logic.
 
+Edited interleave-plan.md
+Viewed interleave-plan.md:140-161
+
+Yes, you have understood it perfectly!
+
+To summarize exactly as you said:
+
+1. **The First Mask (`causal_mask`)**: Enforces **causality**. It ensures that no token can look ahead at future tokens. It only cares about *position* relative to the current token.
+2. **The Second Mask (`attn_mask` / `full_pad_mask`)**: Enforces **validity**. It ensures that the model ignores empty padding tokens that were added just to make the tensor shapes match up. It only cares about *whether a token is real or fake*.
+
+By combining them with a logical AND (`&`), the final rule becomes: **"A token can only be attended to if it is BOTH in the past/present AND is a valid, real token."**
+
 Viewed interleave-plan.md:137-160
 
 Here is a step-by-step graphical visualization of how the tensors transform. 
