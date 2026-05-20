@@ -613,3 +613,103 @@ The key insight: **the model already supports variable-length rows in a batch.**
 4. **Logit extraction.** `logits[:, -1, :]` gives you the last-position logits for every row. For decode rows, this is the next token prediction (correct). For the prefill row, this is the logit after the last token in the chunk — which is only the "first generated token" if the chunk completes the prefill. If the chunk is partial, you don't sample from it; you just cache the KV and move on. Be careful not to sample from a partial prefill row.
 
 5. **Empty decode batch.** When there are no active decode requests (only a prefilling request), the batch is just the prefill chunk. This degenerates to a standard prefill call. Make sure your code handles `len(decode_reqs) == 0` gracefully.
+
+## Errors:
+
+---------------------------------------------------------------------------
+TypeError                                 Traceback (most recent call last)
+/tmp/ipykernel_4739/1371704712.py in <cell line: 0>()
+     11 
+     12     xb, yb = get_batch('train')
+---> 13     logits, loss, _ = model(xb, yb)  # _ discards the cache during training
+     14     optimizer.zero_grad(set_to_none=True)
+     15     loss.backward()
+
+/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py in _wrapped_call_impl(self, *args, **kwargs)
+   1774             return self._compiled_call_impl(*args, **kwargs)  # type: ignore[misc]
+   1775         else:
+-> 1776             return self._call_impl(*args, **kwargs)
+   1777 
+   1778     # torchrec tests the code consistency with the following code
+
+/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py in _call_impl(self, *args, **kwargs)
+   1785                 or _global_backward_pre_hooks or _global_backward_hooks
+   1786                 or _global_forward_hooks or _global_forward_pre_hooks):
+-> 1787             return forward_call(*args, **kwargs)
+   1788 
+   1789         result = None
+
+/tmp/ipykernel_4739/1855062281.py in forward(self, idx, targets, pos, past_kvs, attn_mask)
+    222         new_kvs = []
+...
+--> 127             out, nk, nv = h(x, pk, pv, attn_mask=attn_mask)
+    128             outputs.append(out)
+    129             new_kvs.append((nk, nv))
+
+TypeError: cannot unpack non-iterable NoneType object
+
+Reason: We didn't include training path in forward method
+
+---------------------------------------------------------------------------
+IndexError                                Traceback (most recent call last)
+/tmp/ipykernel_4739/1605021355.py in <cell line: 0>()
+     18     Request(id=2, prompt_tokens=encode("KING HENRY:\n"), max_new_tokens=10),
+     19 ]
+---> 20 s_two = scheduled_generate(model, reqs_two_call, policy="fcfs",
+     21                            token_budget=16, max_kv_tokens=256)
+     22 
+
+/tmp/ipykernel_4739/1937282480.py in scheduled_generate(model, requests, policy, token_budget, max_kv_tokens)
+    288                 idx_next = torch.multinomial(probs, num_samples=1)
+    289 
+--> 290                 disassemble_batch_cache(scheduler.active, new_kvs, pad_lengths)
+    291 
+    292                 for i, req in enumerate(decode_reqs):
+
+/tmp/ipykernel_4739/1937282480.py in disassemble_batch_cache(requests, new_kvs, pad_lengths)
+    131         for head_idx, (batched_k, batched_v) in enumerate(block_kv):
+    132             for i, req in enumerate(requests):
+--> 133                 pad = pad_lengths[i]
+    134                 req.kv_cache[(layer_idx, head_idx)] = (
+    135                     batched_k[i : i + 1, pad:, :],      # (1, T_i + 1, hs)
+
+IndexError: list index out of range
+
+Reason: 
+
+pad_lengths was built from decode_reqs (via build_tok_pos_kv(decode_reqs)), but you're passing scheduler.active which may be longer — because the prefill block above just promoted a request into scheduler.active via scheduler.promote(prefill_req).
+
+Fix: Change scheduler.active to decode_reqs:
+
+# BEFORE (bug):
+disassemble_batch_cache(scheduler.active, new_kvs, pad_lengths)
+# AFTER (fix):
+disassemble_batch_cache(decode_reqs, new_kvs, pad_lengths)
+
+AcceleratorError                          Traceback (most recent call last)
+/tmp/ipykernel_4739/2338838789.py in <cell line: 0>()
+     26 print(f"  Expected prefill chunks: ~{len(prompt) // 8} steps\n")
+     27 
+---> 28 s = interleaved_generate(model, reqs, policy="fcfs",
+     29                          token_budget=8, max_kv_tokens=256)
+     30 
+
+/tmp/ipykernel_4739/283559998.py in interleaved_generate(model, requests, policy, token_budget, max_kv_tokens)
+     64 
+     65                 for i, req in enumerate(decode_reqs):
+---> 66                     req.generated_tokens.append(idx_next[i].item())
+     67                     req._last_token = idx_next[i : i + 1]
+     68                     if req.is_done:
+
+AcceleratorError: CUDA error: device-side assert triggered
+Search for `cudaErrorAssert' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+Fix: 
+
+# BEFORE (bug):
+prompt = prompt[:block_size]  # 32 tokens, no room for decode!
+# AFTER (fix):
+prompt = prompt[:block_size - 5]  # 27 tokens + 5 generated = 32 ≤ block_size
