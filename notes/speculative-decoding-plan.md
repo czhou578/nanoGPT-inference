@@ -167,6 +167,7 @@ def verify_candidates(target_model, current_token, candidates, past_kvs):
     if past_kvs is not None:
         # Get T_past from the first layer, first head's key tensor
         cache_len = past_kvs[0][0][0].shape[1]
+
     positions = torch.arange(cache_len, cache_len + len(all_tokens), device=device).unsqueeze(0)
 
     # Single forward pass!
@@ -181,6 +182,34 @@ def verify_candidates(target_model, current_token, candidates, past_kvs):
 
     return target_probs, new_kvs
 ```
+
+### Visualizing `positions` Allocation
+
+Imagine we have already processed and verified **6 tokens** (which are now stored in our target model's KV cache).
+`cache_len = 6` (occupying absolute sequence indices `0` to `5`).
+
+We are running a speculation step with **K = 3** candidates: `[c0, c1, c2]`.
+`all_tokens = [current_token, c0, c1, c2]` (length = 4).
+
+Here is how the absolute positional indices are mapped out visually:
+
+```text
+Sequence Timeline:
+[   Previously Verified (In KV Cache)   ] [ Current ] [           Speculative Candidates           ]
+[  t0  ,  t1  ,  t2  ,  t3  ,  t4  ,  t5  ] [cur_tok] [    c0     ,       c1       ,       c2       ]
+
+Absolute Logical Positions:
+   0      1      2      3      4      5       6             7               8               9
+                                              ▲             ▲               ▲               ▲
+                                          cache_len    cache_len+1     cache_len+2     cache_len+3
+                                              │             │               │               │
+                                              └─────────────┴───────┬───────┴───────────────┘
+                                                                    │
+                                                 positions = torch.arange(6, 6 + 4)
+                                                 positions = [6, 7, 8, 9]
+```
+
+- **Why this offset is necessary:** The positional embedding matrix expects absolute position indices to add spatial information. By querying positions `[cache_len, ..., cache_len + K]`, the transformer computes the correct positional embeddings for the brand-new incoming tokens relative to the pre-existing cached sequence context.
 
 **Why does this work?** Position `i` in the output only attends to positions `≤ i` (causal masking). So:
 - `target_probs[0]` = P(next | prompt, current_token) — what the target thinks should follow `current_token`
@@ -244,7 +273,7 @@ Think of it as a filter:
 
 ### The Bonus Token
 
-If ALL K candidates are accepted, we get a free extra token from `target_probs[K]` — the target's prediction for position K+1. This means a perfect speculation step yields K+1 tokens.
+If ALL K candidates are accepted, we get a free extra token from `target_probs[K]` — the target's prediction for position K+1. This means a perfect speculation step yields K+1 tokens. The bonus token b0 is not in the KV cache yet, but that's exactly what we want — b0 will become the current_token at the very beginning of the next speculation step, where its KV entry will finally be computed.
 
 ---
 
@@ -275,9 +304,36 @@ def trim_kv_cache(new_kvs, num_accepted, cache_len_before_verify):
     return trimmed
 ```
 
-**Why trim?** If you accepted tokens [A, B] but rejected C (and resampled C'), your KV cache from the verify pass contains entries computed assuming the sequence was [..., A, B, C]. But the actual sequence is [..., A, B, C']. The KV entries for C are wrong — they were computed with the wrong token. You must discard them.
+**Why trim?** If you accepted tokens `[A, B]` but rejected `C` (and resampled `C'`), your KV cache from the verify pass contains entries computed assuming the sequence was `[..., A, B, C]`. But the actual sequence is `[..., A, B, C']`. The KV entries for `C` are wrong — they were computed with the wrong token. You must discard them.
 
-The resampled token C' will be processed in the **next** speculation step, where it gets a fresh KV entry.
+### Visualizing `trim_kv_cache`
+
+Assume **K = 3** candidates drafted: `[c0, c1, c2]`
+Input to verify: `[cur_tok, c0, c1, c2]`
+The verification step produces `new_kvs` which contains KV entries for all 4 of these tokens.
+
+**Scenario:** `c0` is accepted, but `c1` is **rejected**.
+The accept/reject logic replaces `c1` with `resampled_c1` and stops. 
+It returns: `accepted = [c0, resampled_c1]` (length = 2).
+
+Here is how the KV cache is trimmed:
+
+```text
+KV Cache before trimming (from verification step):
+[ ...past_kvs... ] [ cur_tok ] [   c0   ] [   c1   ] [   c2   ]
+                   └────────────────── new_kvs ─────────────────┘
+
+Trimming operation (keep = cache_len + 2):
+[ ...past_kvs... ] [ cur_tok ] [   c0   ] ✂️ discarded (c1, c2) ✂️
+
+Resulting KV Cache:
+[ ...past_kvs... ] [ cur_tok ] [   c0   ]
+
+Current Generated Sequence:
+[ ...prompt...   ] [ cur_tok ] [   c0   ] [ resampled_c1 ]
+```
+
+Notice the perfect alignment: the KV cache contains everything up to `c0`. The very last token in our sequence, `resampled_c1`, is **not** in the KV cache yet. This perfectly maintains our invariant! In the next speculation step, `resampled_c1` will be passed in as the new `cur_tok`, and its KV entry will be computed then.
 
 ---
 
