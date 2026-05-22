@@ -25,6 +25,7 @@ Current state: ~210K param char-level GPT with KV cache implemented. 4 layers, 4
 | **Speculative Decoding** | Use a smaller "draft" model (or even a simple n-gram model) to guess N tokens, then verify them in one forward pass of the main model. | Need a second, smaller model. At 210K params, the model is already tiny — finding a meaningfully smaller draft model is awkward. But you could use a bigram table as the draft. |
 
 ## Only for larger models like GPT-2, 124M
+
 | **Dynamic/Weight-only Quantization (INT4/GPTQ-style)** | `torch.ao.quantization` or manual weight packing. | 64-dim embeddings and 16-dim head sizes mean quantization error is proportionally larger than on 4096-dim models. Demonstrates the mechanics but output quality would degrade noticeably. |
 | **KV Cache Quantization (FP8/INT8 KV)** | Store cached K/V in reduced precision, dequantize on the fly during attention. | Same concern — 16-dim head vectors have very few distinct values, so quantization noise is proportionally brutal. Demonstrates the concept but hurts quality. |
 
