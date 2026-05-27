@@ -172,7 +172,7 @@ class MultiHeadAttention(nn.Module):
         self.proj = nn.Linear(head_size * num_heads, n_embd)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, past_kv=None, attn_mask=attn_mask):
+    def forward(self, x, past_kv=None, attn_mask=None):
         """
         Args:
             x:       (B, T, C)
@@ -185,12 +185,11 @@ class MultiHeadAttention(nn.Module):
             past_kv = [(None, None) * len(self.heads)]
         
         outputs, new_kvs = [], []
-
         for i, h in enumerate(self.heads):
-            past_key, past_value = past_kv[i]
-            out, nk, nv = h(x, past_key, past_value, attn_mask=attn_mask)
+            past_keys, past_value = past_kv[i]
+            out, new_keys, new_values = h(x, past_keys, past_value, attn_mask=attn_mask)
             outputs.append(out)
-            new_kvs.append((nk, nv))
+            new_kvs.append((new_keys, new_values))
 
         out = torch.cat(outputs, dim=-1)
         out = self.dropout(self.proj(out))
@@ -223,8 +222,8 @@ class Block(nn.Module):
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
 
-    def forward(self, x):
-        x = x + self.sa(self.ln1(x))
+    def forward(self, x, past_kvs=None, attn_mask=None):
+        x = x + self.sa(self.ln1(x), past_kv=past_kvs, attn_mask=attn_mask)
         x = x + self.ffwd(self.ln2(x))
         return x
 
@@ -250,20 +249,33 @@ class GPTLanguageModel(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None, start_pos=0):
+    def forward(self, idx, targets=None, pos=0, past_kvs=None, attn_mask=None):
         B, T = idx.shape
 
         # idx and targets are both (B,T) tensor of integers
         tok_emb = self.token_embedding_table(idx) # (B,T,C)
-        pos_emb = self.position_embedding_table(torch.arange(start_pos, start_pos + T, device=device)) # (T,C)
+
+        if pos is None:
+            pos_emb = self.position_embedding_table(torch.arange(T, device=device))
+        else:
+            pos_emb = self.position_embedding_table(pos)
+
         x = tok_emb + pos_emb # (B,T,C)
-        x = self.blocks(x) # (B,T,C)
+
+        if past_kvs is None:
+            past_kvs = [None] * len(self.blocks)
+
+        new_kvs = []
+
+        for i, block in enumerate(self.blocks):
+            x, block_kv = block(x, past_kvs[i], attn_mask)
+            new_kvs.append(block_kv)
+
         x = self.ln_f(x) # (B,T,C)
         logits = self.lm_head(x) # (B,T,vocab_size)
 
-        if targets is None:
-            loss = None
-        else:
+        loss = None
+        if targets is not None:
             B, T, C = logits.shape
             logits = logits.view(B*T, C)
             targets = targets.view(B*T)
