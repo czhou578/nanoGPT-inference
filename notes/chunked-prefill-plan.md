@@ -179,6 +179,43 @@ Your current `Head` already handles both cases — the `past_k is not None` bran
 
 ---
 
+## Step-by-Step Implementation Guide (Unfused Approach)
+
+If you are building this from scratch, follow these steps to implement chunked prefill. We will use the "unfused" approach (running prefill and decode as separate model calls in the same step) as it is much easier to implement and still provides the core scheduling benefits.
+
+### Step 1: Update the `Request` Dataclass
+1. Add a `prefill_cursor: int = 0` field to track how many prompt tokens have been processed.
+2. Introduce a new `"prefilling"` status. The lifecycle is now: `"waiting"` -> `"prefilling"` -> `"active"` -> `"done"`.
+3. Add a helper property `is_fully_prefilled` that checks if `prefill_cursor == len(prompt_tokens)`.
+
+### Step 2: Set Up the Token Budget Loop
+1. In your `chunked_prefill_generate` function, define a `token_budget` (e.g., 16).
+2. Inside the main step loop, first calculate your budget: `remaining_budget = token_budget - len(active_requests)`. (Decode requests always get priority).
+3. Check the queue. If there is a `"waiting"` request and `remaining_budget > 0`, admit it, set its status to `"prefilling"`, and track it as your current prefill job.
+
+### Step 3: Process the Prefill Chunk
+1. If you have a `"prefilling"` request and `remaining_budget > 0`:
+2. Calculate how many tokens you can process: `chunk_size = min(remaining_budget, len(prompt_tokens) - prefill_cursor)`.
+3. Extract the input chunk: `chunk_tokens = prompt_tokens[prefill_cursor : prefill_cursor + chunk_size]`.
+4. Create the position tensor for this chunk: `chunk_pos = torch.arange(prefill_cursor, prefill_cursor + chunk_size)`.
+5. Convert `chunk_tokens` to a tensor of shape `(1, chunk_size)` and `chunk_pos` to `(1, chunk_size)`.
+6. Retrieve the request's existing `kv_cache` (if `prefill_cursor > 0`, you need to format it into `past_kvs`; if `0`, pass `None`).
+7. Run the model: `logits, _, new_kvs = model(chunk_tokens, pos=chunk_pos, past_kvs=past_kvs)`.
+8. Save the `new_kvs` back to the request's `kv_cache`.
+9. Update the cursor: `prefill_cursor += chunk_size`.
+10. **Transition Check:** If `is_fully_prefilled`, take the last logit (`logits[:, -1, :]`), sample the first generated token, append it to `generated_tokens`, set `last_token`, and change the status to `"active"`.
+
+### Step 4: Process the Decode Batch
+1. If you have any `"active"` requests, run standard continuous batching decode on them.
+2. Gather their `last_token`s, assemble their KV caches (`assemble_batch_cache`), run the model (`T=1`), sample the next tokens, and disassemble the caches.
+3. Because this is the "unfused" approach, this is a second `model()` call within the same `step` loop.
+
+### Step 5: Clean Up and Advance
+1. Remove completed requests from the active list.
+2. Increment `step += 1` and repeat until the queue is empty and no requests are active.
+
+---
+
 ## Test Scenarios
 
 ### Test 1: Short prompts (no chunking needed)
