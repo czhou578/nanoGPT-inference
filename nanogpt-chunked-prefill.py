@@ -468,13 +468,15 @@ def chunked_prefill_generate(model, request_queue: list[Request], token_budget: 
 
             prefill_chunk_tokens = None # what we feed into model
             remaining_budget = token_budget - len(active_requests)
-            
-            if remaining_budget > 0 and prefilling_requests:
-                time_step, new_req = request_queue[queue_idx]
-                new_req.status = "prefilling"
-                prefilling_requests.append(new_req)
-                queue_idx += 1
 
+            if not prefilling_requests and queue_idx < len(request_queue):
+                time_step, new_req = request_queue[queue_idx]
+                if time_step <= step:
+                    new_req.status = "prefilling"
+                    prefilling_requests.append(new_req)
+                    queue_idx += 1
+
+            if remaining_budget > 0 and prefilling_requests:
                 p_req = prefilling_requests[0]
                 tokens_left = len(p_req.prompt_tokens) - p_req.prefill_cursor
                 chunk_size = min(remaining_budget, tokens_left) # chunk_end equivalent
@@ -497,8 +499,8 @@ def chunked_prefill_generate(model, request_queue: list[Request], token_budget: 
                     past_kvs = []
 
                     for layer_idx in range(n_layer):
+                        block_kv = []
                         for head_idx in range(n_head):
-                            block_kv = []
                             k, v = p_req.kv_cache[(layer_idx, head_idx)]
                             block_kv.append((k, v))
 
@@ -518,7 +520,7 @@ def chunked_prefill_generate(model, request_queue: list[Request], token_budget: 
                 idx_next = torch.multinomial(probs, num_samples=1)
 
                 if p_req.is_fully_prefilled:
-                    p_req.generated_new_tokens.append(idx_next.item())
+                    p_req.generated_tokens.append(idx_next.item())
                     p_req.status = "active"
                     p_req.last_token = idx_next
                     active_requests.append(p_req)
@@ -527,10 +529,10 @@ def chunked_prefill_generate(model, request_queue: list[Request], token_budget: 
             # decode phase
             if active_requests:
                 batch_tokens = torch.cat([req.last_token for req in active_requests])
-                batch_positions = torch.tensor([len(req.tokens_so_far) - 1 for req in active_requests], device=device)
+                batch_positions = torch.tensor([[len(req.tokens_so_far) - 1] for req in active_requests], device=device)
                 
                 past_kvs, attn_mask, pad_lengths = assemble_batch_cache(active_requests)
-                logits, _, new_kvs = model(batch_tokens, pos=batch_positions, past_kvs=past_kvs)
+                logits, _, new_kvs = model(batch_tokens, pos=batch_positions, past_kvs=past_kvs, attn_mask=attn_mask)
 
                 logits = logits[:, -1, :]
                 probs = F.softmax(logits, dim=-1)
@@ -539,7 +541,7 @@ def chunked_prefill_generate(model, request_queue: list[Request], token_budget: 
                 disassemble_batch_cache(active_requests, new_kvs, pad_lengths)
 
                 for i, req in enumerate(active_requests):
-                    req.generated_new_tokens.append(idx_next[i].item())
+                    req.generated_tokens.append(idx_next[i].item())
                     req.last_token = idx_next[i : i + 1]
                 
             still_active = []
