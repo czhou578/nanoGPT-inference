@@ -193,3 +193,29 @@ Everywhere the mask is `False` (padding), the attention score becomes `-inf`. Af
 ### Why is there no mask in the `past_k is None` (prefill) branch?
 
 During prefill, there's no batching of different requests together — each request is prefilled individually with `B=1`. There's no padding, so the regular causal `tril` mask is sufficient.
+
+
+====================================================
+
+Ah, that is a fantastic question! It feels a bit weird to do "generation" during a phase called "prefill," but there is a very good efficiency reason for it.
+
+When you pass the initial prompt (let's say 10 tokens) through the model during the prefill phase, the model does a massive parallel computation to build the KV cache for those 10 tokens. 
+
+However, the model doesn't *just* output the KV cache. It also outputs the `logits` for all 10 positions. 
+
+The logits at the very last position (`logits[:, -1, :]`) represent the model's prediction for **Token 11**, based on the context of the first 10 tokens.
+
+### You get the first generated token for free!
+
+Since the prefill forward pass *already computed* the probability distribution for the next token, you sample it right then and there. 
+
+If you **didn't** sample it in the prefill loop, your workflow would look like this:
+1. **Prefill:** Pass the 10-token prompt. Throw away the logits, just keep the KV cache.
+2. **Decode Step 1:** Pass Token 10 back into the model (using the cache of tokens 1-9) just to get the logits for Token 11.
+3. Sample Token 11.
+
+That would require doing an extra, completely redundant forward pass! By sampling at the end of the prefill loop, you are grabbing the first generated token immediately and setting it as the `_last_token` so that the decode loop can immediately start working on Token 12. 
+
+So, to summarize:
+*   **Prefill phase:** Processes the prompt, builds the cache, and generates **Token 1**.
+*   **Decode phase:** Uses the cache and Token 1 to generate **Token 2**, Token 3, Token 4, etc.

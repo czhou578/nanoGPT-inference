@@ -1,4 +1,5 @@
 import enum
+import enum
 from typing import Tuple
 from typing import Dict
 from attr import field
@@ -485,7 +486,7 @@ def assemble_batch_cache(requests: list[Request]):
 
     pad_lengths = [max_len - t for t in lengths]
     
-    attn_mask = torch.zeros(B, 1, max_len, device=device)
+    attn_mask = torch.zeros(B, 1, max_len, dtype=torch.bool, device=device)
 
     for i, pad in enumerate(pad_lengths):
         attn_mask[i, :, pad:] = True
@@ -532,7 +533,111 @@ def disassemble_batch_cache(requests, new_kvs, pad_lengths):
                 )
 
 def continuous_batching_generate(model, request_queue: list[Request], max_batch_size = 4):
+    """
+    Request objects arrive at different times:
+    [(t0, reqA), (t1, reqB), (t3, reqC), (t3, reqD)]
     
+    Steps:
+
+    grab the request
+    prefill it (run through model once to get kv's)
+    add it to active requests
+
+    loop until all requests done:
+    
+    decode the active request
+    mark as done
+    disassemble the kv cache (scatter back to per-request storage)
+
+    after loop, move all active requests to completed
+    return completed requests
+    """
+
+    
+    model.eval()
+
+    active_requests = []
+    completed_requests = []
+    step = 0
+    queue_idx = 0
+
+    with torch.no_grad():
+        while active_requests or queue_idx < len(request_queue):
+            while queue_idx < len(request_queue):
+                time_step, req = request_queue[queue_idx]
+
+                if time_step > step: break
+
+                if len(active_requests) >= max_batch_size:
+                    break
+
+                prompt = torch.tensor([req.prompt_tokens], device=device)
+                logits, _, new_kvs = model(prompt)
+
+                for li, bkv in enumerate(new_kvs):
+                    for hi, (k, v) in enumerate(bkv):
+                        req.kv_cache[(li, hi)] = (k, v)
+                
+                logits = logits[:, -1, :]
+                probs = F.softmax(logits, dim=-1)
+                idx_next = torch.multinomial(probs, num_samples=1)
+                req.generated_tokens.append(idx_next[0].item())
+            
+                req.status = "active"
+                req.last_token = idx_next
+
+                if req.is_done:
+                    req.status = "done"
+                    completed_requests.append(req)
+                else:
+                    active_requests.append(req)
+
+                queue_idx += 1
+
+                print(f"  [step {step}] Admitted request {req.id} "
+                      f"(prompt={len(req.prompt_tokens)}, "
+                      f"max_new={req.max_new_tokens})")
+
+            if not active_requests:
+                step += 1
+                continue
+
+            batch_tokens = torch.cat([req.last_token for req in active_requests], dim=0)
+            batch_positions = torch.tensor([[len(req.tokens_so_far) - 1] for req in active_requests], device=device)
+            
+            past_kvs, attn_mask, pad_lengths = assemble_batch_cache(active_requests)
+
+            logits, _, new_kvs = model(batch_tokens, pos=batch_positions, past_kvs=past_kvs, attn_mask=attn_mask)                    
+
+            logits = logits[:, -1, :]
+            probs = F.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+
+            disassemble_batch_cache(active_requests, new_kvs, pad_lengths)
+
+            for i, req in enumerate(active_requests):
+                req.generated_tokens.append(idx_next[i, 0].item())
+                req.last_token = idx_next[i:i+1]
+
+            still_active = []
+
+            for req in active_requests:
+                if not req.is_done:
+                    still_active.append(req)
+                else:
+                    req.status = "done"
+                    completed_requests.append(req)
+            
+            active_requests = still_active
+            step += 1
+    
+    return completed_requests
+            
+
+
+    
+
+
 
                 
 
