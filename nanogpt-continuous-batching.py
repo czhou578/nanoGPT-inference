@@ -222,10 +222,16 @@ class Block(nn.Module):
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
 
-    def forward(self, x, past_kvs=None, attn_mask=None):
-        x = x + self.sa(self.ln1(x), past_kv=past_kvs, attn_mask=attn_mask)
+    def forward(self, x, past_kv=None, attn_mask=None): #here
+        """
+        Returns:
+            x:      (B, T, n_embd)
+            new_kv: list of (new_k, new_v) per head in this block
+        """
+        sa_out, new_kv = self.sa(self.ln1(x), past_kv, attn_mask=attn_mask)
+        x = x + sa_out
         x = x + self.ffwd(self.ln2(x))
-        return x
+        return x, new_kv
 
 class GPTLanguageModel(nn.Module):
 
@@ -281,7 +287,7 @@ class GPTLanguageModel(nn.Module):
             targets = targets.view(B*T)
             loss = F.cross_entropy(logits, targets)
 
-        return logits, loss
+        return logits, loss, new_kvs
 
     # original generate function
     def generate(self, idx, max_new_tokens):
@@ -355,66 +361,118 @@ print(decode(generate_kv_cache(m, context, max_gen)[0].tolist()))
 #open('more.txt', 'w').write(decode(m.generate(context, max_new_tokens=10000)[0].tolist()))
 
 
-# ── non-cached generate (forces full-context recompute every step) ────────────
+# ── 1. No KV cache (full recompute every step) ───────────────────────────────
 def generate_no_cache(model, idx, max_new_tokens):
-    """Runs in train mode so the KV cache branch is never entered."""
-    model.train()                          # disables KV cache path
+    model.train()  # disables KV cache path
     with torch.no_grad():
         for _ in range(max_new_tokens):
             idx_cond = idx[:, -block_size:]
-            logits, _ = model(idx_cond)
+            logits, _, _ = model(idx_cond)
             logits = logits[:, -1, :]
-            probs  = torch.nn.functional.softmax(logits, dim=-1)
+            probs = F.softmax(logits, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
     return idx
 
-# ── cached generate (your existing path, one token fed at a time) ─────────────
+
+# ── 2. With KV cache — passed as raw tensors ─────────────────────────────────
 def generate_with_cache(model, idx, max_new_tokens):
+    """KV cache stored externally — threaded through forward() each step."""
     model.eval()
-    clear_kv_cache(model)
     with torch.no_grad():
-        for _ in range(max_new_tokens):
-            # Feed only the LAST token so the cache does the rest of the work
-            logits, _ = model(idx[:, -1:])   # (B, 1, vocab_size)
-            logits = logits[:, -1, :]
-            probs  = torch.nn.functional.softmax(logits, dim=-1)
-            idx_next = torch.multinomial(probs, num_samples=1)
+        # Prefill: run the entire prompt, get initial cache
+        logits, _, past_kvs = model(idx)
+
+        for step in range(max_new_tokens):
+            logits = logits[:, -1, :]           # (B, vocab_size)
+            probs = F.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)  # (B, 1)
             idx = torch.cat((idx, idx_next), dim=1)
+
+            # Decode: only the new token + its position
+            curr_pos = torch.tensor([[idx.shape[1] - 1]], device=device)  # (1, 1)
+            logits, _, past_kvs = model(idx_next, pos=curr_pos, past_kvs=past_kvs)
+
     return idx
 
-# ── benchmark ─────────────────────────────────────────────────────────────────
-N_TOKENS   = 200
-N_RUNS     = 3       # average over multiple runs for stability
-context    = torch.zeros((1, 1), dtype=torch.long, device=device)
+def generate_request(model: GPTLanguageModel, request: Request):
+    """
+    Generate for a single Request object.
+    The KV cache lives on the Request, not inside the model.
 
-# warm-up (avoids cold-start CUDA overhead skewing results)
-_ = generate_no_cache(model, context.clone(), 10)
-clear_kv_cache(model)
-_ = generate_with_cache(model, context.clone(), 10)
+    This is the building block for the continuous batching scheduler (Hint 3).
+    Each request independently owns its cache, so different requests
+    can have different sequence lengths and lifetimes.
 
-# --- No KV cache ---
-times_no_cache = []
-for _ in range(N_RUNS):
-    t0 = time.perf_counter()
-    generate_no_cache(model, context.clone(), N_TOKENS)
-    if device == 'cuda':
-        torch.cuda.synchronize()
-    times_no_cache.append(time.perf_counter() - t0)
+    while there are active requests OR the waiting queue is non-empty:
+    1. Check the waiting queue — can any new requests join the batch?
+    2. Build the input tensor from ALL active requests (each contributes 1 token)
+    3. Forward pass → get logits for all active requests at once
+    4. Sample next token for each request
+    5. Check: did any request hit its max_new_tokens? → remove it, emit its result
+    6. Go to 1
+    """
 
-# --- With KV cache ---
-times_with_cache = []
-for _ in range(N_RUNS):
-    t0 = time.perf_counter()
-    generate_kv_cache(model, context.clone(), N_TOKENS)
-    if device == 'cuda':
-        torch.cuda.synchronize()
-    times_with_cache.append(time.perf_counter() - t0)
+    model.eval()
 
-avg_no_cache = sum(times_no_cache) / N_RUNS
-avg_with_cache = sum(times_with_cache) / N_RUNS
+    while torch.no_grad():
+        prompt = torch.tensor(
+            [request.prompt_tokens], dtype=torch.long, device=device
+        )  # (1, T_prompt)
 
-print(f"Tokens generated : {N_TOKENS}")
-print(f"No KV cache      : {avg_no_cache:.3f}s  ({N_TOKENS/avg_no_cache:.1f} tok/s)")
-print(f"With KV cache    : {avg_with_cache:.3f}s  ({N_TOKENS/avg_with_cache:.1f} tok/s)")
-print(f"Speedup          : {avg_no_cache/avg_with_cache:.2f}×")
+        logits, _, new_kvs = model(prompt)
+
+        for layer_idx, block_kv in enumerate(new_kvs):
+            for head_idx, (k, v) in enumerate(block_kv):
+                request.kv_cache[(layer_idx, head_idx)] = (k, v)
+
+        request.status = "active"
+
+        while not request.is_done:
+            logits = logits[:, -1, :]
+            probs = F.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+            request.tokens_so_far.append(idx_next[0].item())
+
+            if request.is_done: break
+
+            past_kvs = []
+            for layer_idx in range(n_layer):
+                block_kv = []
+                for head_idx in range(n_head):
+                    block_kv.append(request.kv_cache[(layer_idx, head_idx)])
+                
+                past_kvs.append(block_kv)
+            
+            curr_pos = torch.tensor([[len(request.tokens_so_far)] - 1], device=device)
+
+            logits, _, new_kvs = model(idx_next, pos=curr_pos, past_kvs=past_kvs)
+
+            for layer_idx, block_kv in enumerate(new_kvs):
+                for head_idx, (k, v) in enumerate(block_kv):
+                    request.kv_cache[(layer_idx, head_idx)] = (k, v)
+        
+        request.status = "done"
+
+def assemble_batch_cache(requests: list[Request]):
+    """
+    Gather per-request KV caches into batched tensors.
+    LEFT-pads shorter caches so new tokens always land at the right edge.
+
+    Big problem: You have 3 active requests. Each owns its own KV cache. You need to feed them to the model as one 
+    batched tensor. But their caches have different lengths:
+
+    Returns:
+        past_kvs:    batched cache structure  [layer][head] = (B, T_max, hs)
+        attn_mask:   (B, 1, T_max) bool — True = valid, False = padding
+        pad_lengths: list of int — how many pad positions per request (for disassembly)
+    """
+
+    B = len(requests)
+    
+                
+
+
+
+
+
