@@ -1,3 +1,8 @@
+from typing import Tuple
+from typing import Dict
+from attr import field
+from typing import List
+from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -67,8 +72,40 @@ def clear_kv_cache(model):
             module.key_cache = None
             module.value_cache = None
 
+@dataclass
+class Request():
+    id: int
+    prompt_tokens: List[int]
+    max_new_tokens: int
+    generated_new_tokens: List[int] = field(default_factory=list)
+    status: str = "waiting"
+
+    kv_cache: Dict[Tuple[int, int], Tuple[torch.Tensor, torch.Tensor]] = field(
+        default_factory=List
+    )
+
+    @property
+    def tokens_so_far(self) -> List[int]:
+        """Full sequence: prompt + everything generated."""
+        return self.prompt_tokens + self.generated_tokens
+
+    @property
+    def num_generated(self) -> int:
+        return len(self.generated_tokens)
+
+    @property
+    def is_done(self) -> bool:
+        return self.num_generated >= self.max_new_tokens
+
 class Head(nn.Module):
-    """ one head of self-attention """
+    """ 
+    one head of self-attention 
+    In single-request KV cache generation, you don't need one. 
+    Every position in the cache is a real token. 
+    But in continuous batching, different requests have different sequence lengths, 
+    so assemble_batch_cache left-pads shorter caches with zeros to match the longest one.
+    
+    """
 
     def __init__(self, head_size):
         super().__init__()
@@ -77,12 +114,12 @@ class Head(nn.Module):
         self.value = nn.Linear(n_embd, head_size, bias=False)
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
         
-        self.key_cache = None
-        self.value_cache = None
+        # self.key_cache = None
+        # self.value_cache = None
 
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
+    def forward(self, x, past_k = None, past_v = None, attn_mask = None):
         # input of size (batch, time-step, channels)
         # output of size (batch, time-step, head size)
         B,T,C = x.shape
@@ -91,19 +128,29 @@ class Head(nn.Module):
         v = self.value(x) # (B,T,hs)
 
         if not self.training:
-            if self.key_cache is not None:
-                self.key_cache = torch.cat([self.key_cache, k], dim=-2)
-                self.value_cache = torch.cat([self.value_cache, v], dim=-2)
-            else:
-                self.key_cache = k
-                self.value_cache = v
-            
-            wei = q @ self.key_cache.transpose(-2, -1) * (self.key_cache.shape[-1] ** -0.5)
-            wei = F.softmax(wei, dim=-1)
-            wei = self.dropout(wei)
-            out = wei @ self.value_cache
+            if past_k is not None:
+                k = torch.cat([past_k, k], dim=-2)
+                v = torch.cat([past_v, v], dim=-2)
 
-            return out 
+                wei = q @ k.transpose(-2, -1) * k.shape[-1] ** -0.5 # (B, T_past+T, hs) @ (B, hs, T_past+T) -> (B, T_past+T, T_past+T)
+                
+                if attn_mask is not None:
+                    new_valid = torch.ones(B, 1, T, device=wei.device, dtype=torch.bool)
+                    full_mask = torch.cat([attn_mask, new_valid], dim=-1)
+                    wei = wei.masked_fill(~full_mask, float('-inf'))
+
+                wei = F.softmax(wei, dim=-1)
+                wei = self.dropout(wei)
+                out = wei @ v
+            else:
+                # in prefill, each request processed separately
+                wei = q @ k.transpose(-2,-1) * k.shape[-1] ** -0.5
+                wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+                wei = F.softmax(wei, dim=-1)
+                wei = self.dropout(wei)
+                out = wei @ v
+            
+            return out, k, v
 
         else:
             # compute attention scores ("affinities")
@@ -113,7 +160,8 @@ class Head(nn.Module):
             wei = self.dropout(wei)
             # perform the weighted aggregation of the values
             out = wei @ v # (B, T, T) @ (B, T, hs) -> (B, T, hs)
-        return out
+        
+        return out, None, None
 
 class MultiHeadAttention(nn.Module):
     """ multiple heads of self-attention in parallel """
@@ -124,10 +172,29 @@ class MultiHeadAttention(nn.Module):
         self.proj = nn.Linear(head_size * num_heads, n_embd)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
-        out = torch.cat([h(x) for h in self.heads], dim=-1)
+    def forward(self, x, past_kv=None, attn_mask=attn_mask):
+        """
+        Args:
+            x:       (B, T, C)
+            past_kv: list of (past_k, past_v) per head, or None
+        Returns:
+            out:    (B, T, n_embd)
+            new_kv: list of (new_k, new_v) per head
+        """        
+        if past_kv is None:
+            past_kv = [(None, None) * len(self.heads)]
+        
+        outputs, new_kvs = [], []
+
+        for i, h in enumerate(self.heads):
+            past_key, past_value = past_kv[i]
+            out, nk, nv = h(x, past_key, past_value, attn_mask=attn_mask)
+            outputs.append(out)
+            new_kvs.append((nk, nv))
+
+        out = torch.cat(outputs, dim=-1)
         out = self.dropout(self.proj(out))
-        return out
+        return out, new_kvs
 
 class FeedFoward(nn.Module):
     """ a simple linear layer followed by a non-linearity """
@@ -204,6 +271,7 @@ class GPTLanguageModel(nn.Module):
 
         return logits, loss
 
+    # original generate function
     def generate(self, idx, max_new_tokens):
         # idx is (B, T) array of indices in the current context
         for _ in range(max_new_tokens):

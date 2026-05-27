@@ -114,3 +114,82 @@ You don't need HTTP or async. Just create a list of "requests" with different pr
 3. **Write the scheduler loop** — the `while` loop described above
 4. **Assemble/disassemble the batch** each step — gather active requests into a batch tensor, scatter results back
 5. **Test**: submit 3 requests with different prompt lengths and different max_new_tokens, verify they all complete correctly and the outputs match single-request generation
+
+
+
+==========================================
+
+Edited nanogpt-continuous-batching.py
+Edited nanogpt-continuous-batching.py
+Edited nanogpt-continuous-batching.py
+Edited nanogpt-continuous-batching.py
+Viewed nanogpt-continuous-batching.py:102-134
+
+You're looking at the `Head.forward` decode path in the notebook. Let me walk through the complete, working version from the notebook step by step, since that's the one with the attention mask logic:
+
+```python
+def forward(self, x, past_k=None, past_v=None, attn_mask=None):
+    B, T, C = x.shape
+    k = self.key(x)    # (B, T, hs)
+    q = self.query(x)  # (B, T, hs)
+    v = self.value(x)  # (B, T, hs)
+
+    if not self.training:
+        if past_k is not None:
+            # ── Decode step ──
+            k = torch.cat([past_k, k], dim=1)   # (B, T_past + T, hs)
+            v = torch.cat([past_v, v], dim=1)
+
+            wei = q @ k.transpose(-2, -1) * k.shape[-1]**-0.5
+
+            if attn_mask is not None:
+                new_valid = torch.ones(B, 1, T, device=wei.device, dtype=torch.bool)
+                full_mask = torch.cat([attn_mask, new_valid], dim=-1)
+                wei = wei.masked_fill(~full_mask, float('-inf'))
+
+            wei = F.softmax(wei, dim=-1)
+            wei = self.dropout(wei)
+            out = wei @ v
+```
+
+### Why do we even need an attention mask here?
+
+In single-request KV cache generation, you don't need one. Every position in the cache is a real token. But in **continuous batching**, different requests have different sequence lengths, so `assemble_batch_cache` **left-pads** shorter caches with zeros to match the longest one:
+
+```
+Request 0 cache (length 10): [t0, t1, t2, t3, t4, t5, t6, t7, t8, t9]
+Request 1 cache (length  7): [0,  0,  0,  t0, t1, t2, t3, t4, t5, t6]
+                               ^^^^^^^^^^
+                               fake padding — not real tokens!
+```
+
+Without a mask, the query would attend to those zero-padded positions as if they were real tokens, corrupting the output.
+
+### The mask logic, step by step:
+
+**Step 1:** `assemble_batch_cache` builds `attn_mask` of shape `(B, 1, T_past)` where `True` = real token, `False` = padding:
+```
+Request 0: [True, True, True, True, True, True, True, True, True, True]
+Request 1: [False, False, False, True, True, True, True, True, True, True]
+```
+
+**Step 2:** After `torch.cat([past_k, k])`, the cache grew by 1 (the new token). The mask is now too short — it covers `T_past` positions but the keys have `T_past + 1`. We need to extend it:
+```python
+new_valid = torch.ones(B, 1, T, device=wei.device, dtype=torch.bool)  # T=1 during decode
+full_mask = torch.cat([attn_mask, new_valid], dim=-1)  # (B, 1, T_past + 1)
+```
+This appends a `True` for the new token (which is always real, never padding):
+```
+Request 0: [True, True, True, True, True, True, True, True, True, True, True]
+Request 1: [False, False, False, True, True, True, True, True, True, True, True]
+```
+
+**Step 3:** Apply the mask to the attention scores:
+```python
+wei = wei.masked_fill(~full_mask, float('-inf'))
+```
+Everywhere the mask is `False` (padding), the attention score becomes `-inf`. After softmax, `-inf` becomes `0.0`, meaning the query completely ignores those padding positions.
+
+### Why is there no mask in the `past_k is None` (prefill) branch?
+
+During prefill, there's no batching of different requests together — each request is prefilled individually with `B=1`. There's no padding, so the regular causal `tril` mask is sufficient.
