@@ -1,3 +1,4 @@
+import enum
 from typing import Tuple
 from typing import Dict
 from attr import field
@@ -466,10 +467,73 @@ def assemble_batch_cache(requests: list[Request]):
         past_kvs:    batched cache structure  [layer][head] = (B, T_max, hs)
         attn_mask:   (B, 1, T_max) bool — True = valid, False = padding
         pad_lengths: list of int — how many pad positions per request (for disassembly)
+    
+    Request.kv_cache = {
+        # Layer 0
+        (0, 0): ( Key_Tensor, Value_Tensor ), # Head 0
+        (0, 1): ( Key_Tensor, Value_Tensor ), # Head 1
+        (0, 2): ( Key_Tensor, Value_Tensor ), # Head 2
+        (0, 3): ( Key_Tensor, Value_Tensor ), # Head 3
+        
+    }
+    
     """
 
     B = len(requests)
+    lengths = [req.kv_cache[(0, 0)][0].shape[1] for req in requests]
+    max_len = max(lengths)
+
+    pad_lengths = [max_len - t for t in lengths]
     
+    attn_mask = torch.zeros(B, 1, max_len, device=device)
+
+    for i, pad in enumerate(pad_lengths):
+        attn_mask[i, :, pad:] = True
+    
+    past_kvs = []
+
+    for layer_idx in range(n_layer):
+        layer_kvs = []
+        for head_idx in range(n_head):
+            keys, values = [], []
+
+            for i, req in enumerate(requests):
+                k, v, = req.kv_cache[(layer_idx, head_idx)]
+                if pad_lengths[i] > 0:
+                    hs = k.shape[2]
+                    pad = torch.zeros(1, pad_lengths[i], hs, device=device)
+
+                    k = torch.cat([pad, k], dim=1)
+                    v = torch.cat([pad, v], dim=1)
+
+                keys.append(k)
+                values.append(v)
+            
+            layer_kvs.append((torch.cat(keys, dim=0), torch.cat(values, dim=0)))
+        
+        past_kvs.append(layer_kvs)
+    
+    return past_kvs, attn_mask, pad_lengths
+
+
+def disassemble_batch_cache(requests, new_kvs, pad_lengths):
+    """
+    Scatter batched KV cache back to per-request storage.
+    After Head's torch.cat, each row is (T_max + 1) — strip the left-padding.
+    """
+
+    for layer_idx, layer_kvs in enumerate(new_kvs):
+        for head_idx, (k, v) in enumerate(layer_kvs):
+            for i, req in enumerate(requests):
+                pad = pad_lengths[i]
+                req.kv_cache[(layer_idx, head_idx)] = (
+                    k[i: i + 1, pad:, :],
+                    v[i: i + 1, pad:, :]
+                )
+
+def continuous_batching_generate(model, request_queue: list[Request], max_batch_size = 4):
+    
+
                 
 
 
