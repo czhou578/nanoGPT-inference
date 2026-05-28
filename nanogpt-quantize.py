@@ -604,7 +604,7 @@ def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_t
         
         return scheduler
 
-def benchmark_generate(mode, context, n_tokens=200, n_trials=5):
+def benchmark_generate(model, context, n_tokens=200, n_trials=5):
     """Returns mean latency in ms over n_trials runs."""
     model.eval()
     
