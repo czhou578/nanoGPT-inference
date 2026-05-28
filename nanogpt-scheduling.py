@@ -1,24 +1,20 @@
-"""
-Chunked Prefill
-
-"""
-
-import enum
+import heapq
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-import time
+import heapq
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple
+from dataclasses import dataclass
 
 # hyperparameters
 batch_size = 16 # how many independent sequences will we process in parallel?
 block_size = 32 # what is the maximum context length for predictions?
 max_iters = 5000
-eval_interval = 500
+eval_interval = 100
 learning_rate = 1e-3
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-eval_iters = 50
+eval_iters = 200
 n_embd = 64
 n_head = 4
 n_layer = 4
@@ -77,7 +73,9 @@ class Request:
     max_new_tokens: int               # how many tokens this request wants
     generated_tokens: List[int] = field(default_factory=list)
     status: str = "waiting"           # "waiting" -> "prefilling" -> "active" -> "done"
-    prefill_cursor: int = 0           # how many prompt tokens we've already processed
+    prefill_cursor: int = 0
+    priority: int = 0         # 0 = highest priority
+    arrival_time: int = 0     # set when admitted to the scheduler
 
     # Hint 2: Per-request KV cache, keyed by (layer_idx, head_idx)
     # Each value is a (key_tensor, value_tensor) tuple of shape (1, T_i, head_size)
@@ -105,6 +103,88 @@ class Request:
 
     def clear_cache(self):
         self.kv_cache.clear()
+
+
+class Scheduler:
+    def __init__(self, policy='fcfs', max_batch_size=4, token_budget=16, max_kv_tokens=22):
+        self.policy = policy
+        self.max_batch_size = max_batch_size
+        self.token_budget = token_budget
+        self.max_kv_tokens = max_kv_tokens
+
+        self.waiting = []
+        self.prefilling = []
+        self.active = []
+        self.preempted = []    
+
+
+    def sort_key(self, req: Request):
+        if self.policy == "fcfs":
+            return (0, req.arrival_time, req.id)
+        elif self.policy == "priority":
+            return (req.priority, req.arrival_time, req.id)
+        else:
+            raise ValueError(f"Unknown policy: {self.policy}")
+
+    def add_request(self, req: Request):
+        key = self.sort_key(req)
+        heapq.heappush(self.waiting, (key, req))
+
+    def promote(self, req: Request):
+        self.prefilling.remove(req)
+        req.status = "active"
+        self.active.append(req)
+    
+    def complete(self, req: Request):
+        self.active.remove(req)
+        req.status = "done"
+
+    def is_done(self):
+        return not (self.waiting or self.prefilling or self.active)
+    
+    def maybe_admit(self, step):
+        if self.prefilling or not self.waiting:
+            return
+        
+        if len(self.active) >= self.max_batch_size:
+            return
+        
+        candidate = self.waiting[0][-1]
+        kv_tokens_used = sum(len(req.prompt_tokens) + req.num_generated for req in self.active)
+
+        if kv_tokens_used + len(candidate.prompt_tokens) > self.max_kv_tokens:
+            return
+        
+        heapq.heappop(self.waiting)
+        candidate.arrival_time = step
+        candidate.status = "prefilling"
+        self.prefilling.append(candidate)
+
+    def maybe_preempt(self):
+        kv_tokens_used = sum(len(req.prompt_tokens) + req.num_generated for req in self.active)
+
+        while self.active and kv_tokens_used > self.max_kv_tokens:
+            victim = max(self.active, key=lambda r: (r.priority, -r.arrival_time))
+            kv_tokens_used -= (len(victim.prompt_tokens) + victim.num_generated)
+            
+            self.active.remove(victim)
+            victim.clear_cache()
+            victim.generated_tokens.clear()
+            victim.prefill_cursor = 0
+            victim.status = "waiting"
+            self.preempted.append(victim)
+            
+            key = self.sort_key(victim)
+            heapq.heappush(self.waiting, (key, victim))
+
+    def schedule(self, step: int):
+        self.maybe_admit(step)
+        self.maybe_preempt()
+
+        prefill_req = self.prefilling[0] if self.prefilling else None
+        decode_reqs = list(self.active)
+
+        return prefill_req, decode_reqs
 
 
 class Head(nn.Module):
@@ -317,6 +397,7 @@ class GPTLanguageModel(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)
         return idx
 
+
 model = GPTLanguageModel()
 m = model.to(device)
 print(sum(p.numel() for p in m.parameters())/1e6, 'M parameters')
@@ -338,7 +419,7 @@ for iter in range(max_iters):
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
 print(decode(m.generate(context, max_new_tokens=200)[0].tolist()))
 
-def assemble_batch_cache(requests):
+def assemble_batch_cache(requests: list[Request]):
     """
     Gather per-request KV caches into batched tensors.
     LEFT-pads shorter caches so new tokens always land at the right edge.
@@ -351,212 +432,150 @@ def assemble_batch_cache(requests):
         attn_mask:   (B, 1, T_max) bool — True = valid, False = padding
         pad_lengths: list of int — how many pad positions per request (for disassembly)
     """
-
     B = len(requests)
     lengths = [req.kv_cache[(0, 0)][0].shape[1] for req in requests]
     max_t = max(lengths)
 
-    pad_lengths = [max_t - t for t in lengths] # pad lengths for every position in t
+    pad_lengths = [max_t - t for t in lengths]
 
-    attn_mask = torch.zeros(B, 1, max_t, device=device, dtype=torch.bool)
+    attn_mask = torch.zeros((B, 1, max_t), dtype=torch.bool, device=device)
 
     for i, pad in enumerate(pad_lengths):
-        attn_mask[i, 0, pad:] = True
-
+        attn_mask[i, :, pad:] = True
+    
     past_kvs = []
 
     for layer_idx in range(n_layer):
         block_kv = []
-
         for head_idx in range(n_head):
             keys, values = [], []
 
-            for i, req in enumerate(requests):
-                k, v = req.kv_cache[(layer_idx, head_idx)]
-                if pad_lengths[i] > 0:
+            for i, q in enumerate(requests):
+                k, v = q.kv_cache[(layer_idx, head_idx)]
+                pad = pad_lengths[i]
+
+                if pad > 0:
                     hs = k.shape[2]
-                    pad = torch.zeros(1, pad_lengths[i], hs, device=device)
+                    pad = torch.zeros(1, pad, hs, device=device)
+                    
                     k = torch.cat([pad, k], dim=1)
                     v = torch.cat([pad, v], dim=1)
-
+                
                 keys.append(k)
                 values.append(v)
-
+            
             block_kv.append((torch.cat(keys, dim=0), torch.cat(values, dim=0)))
-
         past_kvs.append(block_kv)
-
+    
     return past_kvs, attn_mask, pad_lengths
 
 def disassemble_batch_cache(requests, new_kvs, pad_lengths):
-    """
-    Scatter batched KV cache back to per-request storage.
-    After Head's torch.cat, each row is (T_max + 1) — strip the left-padding.
-    """
     for layer_idx, block_kv in enumerate(new_kvs):
         for head_idx, (batched_k, batched_v) in enumerate(block_kv):
             for i, req in enumerate(requests):
                 pad = pad_lengths[i]
+                
                 req.kv_cache[(layer_idx, head_idx)] = (
-                    batched_k[i : i + 1, pad:, :],      # (1, T_i + 1, hs)
-                    batched_v[i : i + 1, pad:, :],
-                )
+                    batched_k[i:i + 1, pad:, :],
+                    batched_v[i:i + 1, pad:, :]
+                ) 
 
-def chunked_prefill_generate(model, request_queue: list[Request], token_budget: int = 16):
+def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_tokens=256):
     """
-    Step 1: Initialize
-    Create empty lists: active_requests, done_requests, all_generated_tokens.
+        create scheduler instance
+        add all requests to scheduler
 
-    Step 2: Main Loop
-    Loop while request_queue is not empty OR active_requests is not empty.
-
-    Step 3: Budget Calculation
-    Remaining budget = token_budget - len(active_requests). (Decode requests take priority).
-
-    Step 4: Admit New Requests
-    While there are waiting requests and remaining_budget > 0:
-        Move a request from request_queue to active_requests.
-        Set its status to "prefilling".
-        Decrement remaining_budget.
-        Break if budget runs out.
-
-    Step 5: Prefill Phase (Unfused)
-    Identify the single request currently in "prefilling" state.
-    If no request is prefilling, skip this block.
-    Calculate chunk_size = min(remaining_budget, prompt_tokens_left).
-    Extract the chunk of input tokens and create the position tensor.
-    Call model(chunk_tokens, pos=chunk_pos, past_kvs=current_kv_cache).
-    Save the returned new_kvs back to the request's kv_cache.
-    Update prefill_cursor.
-    If prefill is now complete:
-        Take the last logit from the chunk.
-        Sample the first generated token.
-        Append it to that request's generated_tokens.
-        Set status to "active".
-
-    Step 6: Decode Phase (Unfused)
-    Filter active_requests to only those in "active" state.
-    If there are any active requests:
-        Assemble their KV caches into batched tensors using assemble_batch_cache.
-        Run model(active_tokens, past_kvs=batched_kvs).
-        Disassemble the new KV caches back to per-request using disassemble_batch_cache.
-        For each request:
-            Take the last logit.
-            Sample the next token.
-            Append it to generated_tokens.
-
-    Step 7: Housekeeping
-    Identify any requests that are now "done" (e.g. reached max_new_tokens).
-    Remove them from active_requests and add them to done_requests.
-
-    Step 8: Advance Time
-    Increment the step counter.
-
-    Step 9: Termination
-    Once the loop finishes, return all_generated_tokens.
     """
-
-    model.eval()
-    active_requests = []
-    completed_requests = []
-    prefilling_requests = []
+    scheduler = Scheduler(policy, token_budget, max_kv_tokens)
+    
     step = 0
-    queue_idx = 0
+
+    for req in requests:
+        req.arrival_time = step
+        scheduler.add_request(req)
+    
+    model.eval()
 
     with torch.no_grad():
-        while queue_idx < len(request_queue) or active_requests or prefilling_requests:
+        while not scheduler.is_done():
+            prefill_req, decode_reqs = scheduler.schedule(step)
 
-            prefill_chunk_tokens = None # what we feed into model
-            remaining_budget = token_budget - len(active_requests)
+            if prefill_req:
+                prefill_chunk_tokens = None
+                remaining_budget = token_budget - len(scheduler.active)
 
-            if not prefilling_requests and queue_idx < len(request_queue):
-                time_step, new_req = request_queue[queue_idx]
-                if time_step <= step:
-                    new_req.status = "prefilling"
-                    prefilling_requests.append(new_req)
-                    queue_idx += 1
+                if remaining_budget > 0 and scheduler.prefilling:
+                    p_req = scheduler.prefilling[0]
 
-            if remaining_budget > 0 and prefilling_requests: # only slice the next chunk if budget allows and there are requests waiting to be pref
-                p_req = prefilling_requests[0]
-                tokens_left = len(p_req.prompt_tokens) - p_req.prefill_cursor
-                chunk_size = min(remaining_budget, tokens_left) # chunk_end equivalent
+                    tokens_left = len(p_req.prompt_tokens) - p_req.prefill_cursor
+                    chunk_size = min(remaining_budget, tokens_left)
 
-                chunk_start = p_req.prefill_cursor
-                chunk_tokens = p_req.prompt_tokens[chunk_start : chunk_start + chunk_size]
+                    chunk_start = p_req.prefill_cursor
+                    chunk_end = chunk_start + chunk_size
 
-                prefill_chunk_tokens = torch.tensor([chunk_tokens], device=device)
-
-                p_req.prefill_cursor += chunk_size
-
-            if prefill_chunk_tokens is None and not active_requests:
-                step += 1
-                continue
+                    toks = p_req.prompt_tokens[chunk_start:chunk_end]
+                    prefill_chunk_tokens = torch.tensor([toks], dtype=torch.long, device=device)
+                    
+                    p_req.prefill_cursor = chunk_end
                 
-            if prefill_chunk_tokens is not None:
-                pos = torch.arange(chunk_start, chunk_start + chunk_size, device=device).unsqueeze(0)
-
-                if p_req.kv_cache:
-                    past_kvs = []
-
-                    for layer_idx in range(n_layer):
-                        block_kv = []
-                        for head_idx in range(n_head):
-                            k, v = p_req.kv_cache[(layer_idx, head_idx)]
-                            block_kv.append((k, v))
-
-                        past_kvs.append(block_kv)
-
-                    logits, _, new_kvs = model(prefill_chunk_tokens, pos=pos, past_kvs=past_kvs)
+                if len(prefill_chunk_tokens) == 0 and not scheduler.active:
+                    step += 1
+                    continue 
                 
-                else:
-                    logits, _, new_kvs = model(prefill_chunk_tokens, pos=pos)
+                if len(prefill_chunk_tokens) > 0:
+                    pos = torch.arange(chunk_start, chunk_end, device=device).unsqueeze(0)
+                    
+                    if p_req.kv_cache:
+                        past_kvs = []
 
-                for li, bkv in enumerate(new_kvs):
-                    for hi, (k, v) in enumerate(bkv):
-                        p_req.kv_cache[(li, hi)] = (k, v)
+                        for layer_idx in range(n_layer):
+                            block_kv = []
+
+                            for head_idx in range(n_head):
+                                k, v = p_req.kv_cache[(layer_idx, head_idx)]
+                                block_kv.append((k, v))
+
+                            past_kvs.append(block_kv)
+                        
+                        logits, _, new_kvs = model(prefill_chunk_tokens, pos=pos, past_kvs=past_kvs)
+                    else:
+                        logits, _, new_kvs = model(prefill_chunk_tokens, pos=pos)
+                        
+                    for layer_idx, block_kv in enumerate(new_kvs):
+                        for head_idx, (k, v) in enumerate(block_kv):
+                            p_req.kv_cache[(layer_idx, head_idx)] = (k, v)
+                    
+                    logits = logits[:, -1, :]  # get the last token's logits
+                    probs = F.softmax(logits, dim=-1)
+                    idx_next = torch.multinomial(probs, num_samples=1)
                 
-                logits = logits[:, -1, :]
-                probs = F.softmax(logits, dim=-1)
-                idx_next = torch.multinomial(probs, num_samples=1)
-
-                if p_req.is_fully_prefilled:
-                    p_req.generated_tokens.append(idx_next.item())
-                    p_req.status = "active"
-                    p_req.last_token = idx_next
-
-                    active_requests.append(p_req)
-                    prefilling_requests.pop(0)
+                    if prefill_req.is_fully_prefilled:
+                        prefill_req.generated_tokens.append(idx_next.item())
+                        prefill_req._last_token = idx_next
+                        scheduler.promote(prefill_req)
             
-            # decode phase
-            if active_requests:
-                batch_tokens = torch.cat([req.last_token for req in active_requests])
-                batch_positions = torch.tensor([[len(req.tokens_so_far) - 1] for req in active_requests], device=device)
-                
-                past_kvs, attn_mask, pad_lengths = assemble_batch_cache(active_requests)
+            if decode_reqs:
+                batch_tokens = torch.cat([req._last_token for req in scheduler.active], dim=0)
+                batch_positions = torch.tensor([[len(req.tokens_so_far) - 1] for req in scheduler.active], device=device)
+
+                past_kvs, attn_mask, pad_lengths = assemble_batch_cache(scheduler.active)
+
                 logits, _, new_kvs = model(batch_tokens, pos=batch_positions, past_kvs=past_kvs, attn_mask=attn_mask)
-
                 logits = logits[:, -1, :]
                 probs = F.softmax(logits, dim=-1)
                 idx_next = torch.multinomial(probs, num_samples=1)
 
-                disassemble_batch_cache(active_requests, new_kvs, pad_lengths)
+                disassemble_batch_cache(scheduler.active, new_kvs, pad_lengths)
 
-                for i, req in enumerate(active_requests):
+                for i, req in enumerate(scheduler.active):
                     req.generated_tokens.append(idx_next[i].item())
-                    req.last_token = idx_next[i : i + 1]
-                
-            still_active = []
+                    req._last_token = idx_next[i : i + 1]
 
-            for req in active_requests:
-                if req.is_done:
-                    completed_requests.append(req)
-                else:
-                    still_active.append(req)
+
+                for req in list(scheduler.active):
+                    if req.is_done:
+                        scheduler.complete(req)
             
-            active_requests = still_active
-
-        step += 1
-        
-    return completed_requests
-                            
-
+            step += 1
+    
+        return scheduler
