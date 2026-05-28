@@ -1,4 +1,3 @@
-import enum
 import heapq
 import torch
 import torch.nn as nn
@@ -580,19 +579,3 @@ def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_t
             step += 1
     
         return scheduler
-                
-
-
-
-
-                
-
-                    
-
-                        
-
-
-
-                
-
-
