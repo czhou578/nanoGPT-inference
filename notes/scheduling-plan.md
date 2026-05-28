@@ -221,3 +221,37 @@ After preemption, the re-admitted request should produce **identical output** to
 | Model / Head / assemble_batch_cache | **Nothing changes** — scheduling is pure Python above the model |
 
 The key insight: **the model doesn't know anything about scheduling**. All of this complexity lives in the 50–100 lines of `Scheduler` Python above it.
+
+## Recommended Implementation Order
+
+If you are implementing this from scratch, follow this order to build it incrementally:
+
+1. **Step 1: Update the `Request` Dataclass (Hint 1)**
+   - Add `priority` and `arrival_time` fields.
+   - *Tip*: If using `heapq` directly with a tuple like `(sort_key, req)`, make sure your dataclass defines `__lt__` (less than) or just include a tie-breaker ID so python doesn't try to compare the `Request` objects themselves when priorities match.
+
+2. **Step 2: Create the `Scheduler` Skeleton (Hint 2 & 3)**
+   - Define the `__init__` with your state lists: `waiting` (heap), `prefilling`, `active`, and `preempted`.
+   - Implement the `_sort_key()` method so the waiting queue correctly handles FCFS vs. Priority.
+   - Write the `add_request()` method which pushes requests onto the `waiting` heap.
+
+3. **Step 3: Implement State Transitions (Hint 5)**
+   - Add basic helper methods to move requests between states: `promote()` (from prefilling to active) and `complete()` (remove from active).
+
+4. **Step 4: Implement Admission & Memory Budgeting (Hint 4 & 5)**
+   - Implement `_maybe_admit()`: Look at the top of the `waiting` heap and promote it to `prefilling` if `prefilling` is empty and you have enough KV memory budget.
+   - Implement `_maybe_preempt()`: Calculate `total_kv_used`. If it exceeds `max_kv_tokens`, find the lowest priority request in `active`, call `req.clear_cache()`, reset its state, and move it to `preempted`.
+
+5. **Step 5: Finalize the `schedule()` Method (Hint 5)**
+   - Tie the pieces together. Call `_maybe_admit()` and `_maybe_preempt()`.
+   - Return the `prefill_req` (if any) and the list of `decode_reqs` for the current step.
+
+6. **Step 6: Refactor the Generate Loop (Hint 6)**
+   - Write the `scheduled_generate()` function.
+   - Feed requests into the scheduler, and loop while `not scheduler.is_done()`.
+   - Wire up the prefill and decode execution logic to cleanly rely on the outputs of `schedule()`.
+
+7. **Step 7: Testing & Verification (Hints 7 & 8)**
+   - Start with Test 1 (FCFS) to ensure basic continuous batching still works.
+   - Run Test 2 (Priority) and print logs to verify queue jumping.
+   - Lower `max_kv_tokens` significantly and run Tests 3 and 4 to verify preemption, cache clearing, and re-prefilling correctness.
