@@ -507,3 +507,37 @@ the cache. All the complexity lives in 100–150 lines of Python cache managemen
 6. **Prefix caching doesn't help decode.** It only accelerates prefill — decode tokens are
    always unique (they're generated, not shared). The optimization is purely about avoiding
    redundant KV computation for shared prompt prefixes.
+
+---
+
+## Implementation Checklist & Order
+
+If you are implementing this from scratch (e.g., in `nanogpt-prefix-caching.py`), follow this exact order to build the caching layer logically without breaking the core engine:
+
+**Step 1: Foundational Data Structures**
+- Implement the hashing function `hash_block_tokens()` (ensure parent chaining is present).
+- Implement the `CachedBlock` dataclass and the `BlockCache` class with its LRU `insert`, `lookup`, and `_evict_lru` logic.
+
+**Step 2: Core Cache Operations**
+- Implement `find_cached_prefix()`: Iterate through prompt blocks and stop at the first cache miss.
+- Implement `load_cached_blocks()`: Fetch the KV data from the `BlockCache`, write it to the request's `kv_cache` dictionary, and advance the `prefill_cursor`.
+- Implement `commit_completed_blocks()`: Slice full blocks from the request's live `kv_cache`, **clone them** (Gotcha #1), and insert them into `BlockCache`.
+- Update the `Request` dataclass to include a `_committed_blocks` integer initialized to 0.
+
+**Step 3: Modify the Scheduler Initialization**
+- Update the `Scheduler.__init__` method to take and store `block_cache` and `block_size` parameters.
+
+**Step 4: Update Scheduler Admission (`_maybe_admit`)**
+- When evaluating a candidate in `_maybe_admit`, call `find_cached_prefix()` first to see how many tokens are already cached.
+- Calculate `actual_kv_cost = len(candidate.prompt_tokens) - num_cached`.
+- Use `actual_kv_cost` to check against `self.max_kv_tokens`.
+- Once admitted, immediately call `load_cached_blocks()` to jump-start the request's `prefill_cursor` before appending it to `self.prefilling`.
+
+**Step 5: Update the Generation Loop**
+- In `scheduled_generate`, locate the section where the `prefill_req` chunk finishes and `p_req.kv_cache` is updated.
+- Right after updating the `kv_cache`, call `commit_completed_blocks()` to push any newly-finished full blocks into the global cache.
+- (Optional but recommended) Add print statements during admission and block commitment as detailed in Hint 8 to prove the cache is working.
+
+**Step 6: Run Tests**
+- Construct the 5 test scenarios (Identical prefixes, Shared prefixes with different suffixes, No shared prefix, Memory pressure, and Output correctness).
+- Validate that the total generated text matches exactly with what a non-caching baseline would produce.
