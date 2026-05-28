@@ -156,7 +156,6 @@ def load_cached_blocks(request, block_cache, prompt_tokens, block_size):
                 request.kv_cache[(layer, head)] = (k.clone(), v.clone())
         
         num_cached += block_size
-        parent_hash = parent_hash
     
     request.prefill_cursor = num_cached
     return num_cached
@@ -674,10 +673,6 @@ def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_t
                     pos = torch.arange(chunk_start, chunk_start + chunk_size, device=device).unsqueeze(0)
 
                     if p_req.kv_cache:
-                        #  This format is wrong 
-                        # logits, _, new_kvs = model(prefill_chunk_tokens, past_kvs=req.kv_cache)
-                        # list[list[(k, v)]] is shape
-                        
                         past_kvs = []
                         for layer_idx in range(n_layer):
                             block_kv = [(p_req.kv_cache[(layer_idx, hi)]) for hi in range(n_head)] 
@@ -699,9 +694,8 @@ def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_t
                     if prefill_req.is_fully_prefilled:
                         prefill_req.generated_tokens.append(idx_next.item())
                         prefill_req._last_token = idx_next
-                        commit_completed_blocks(prefill_req, scheduler.block_cache, BLOCK_SIZE)
-                        # print(f"[step {step}] Committed {num_new_blocks} blocks from req {req.id} to cache "
-                        #     f"(cache size: {len(block_cache.cache)}/{block_cache.max_blocks})")                        
+                        commit_completed_blocks(prefill_req, scheduler.block_cache, scheduler.block_size)
+
                         scheduler.promote(prefill_req)
     
             if decode_reqs:
@@ -725,11 +719,11 @@ def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_t
 
                 disassemble_batch_cache(scheduler.active, new_kvs, pad_lengths)
 
-                for i, req in enumerate(decode_reqs):
+                for i, req in enumerate(scheduler.active):
                     req.generated_tokens.append(idx_next[i].item())
                     req._last_token = idx_next[i : i + 1]
                 
-                for req in decode_reqs:
+                for req in list(scheduler.active):
                     if req.is_done:
                         scheduler.complete(req)
         
