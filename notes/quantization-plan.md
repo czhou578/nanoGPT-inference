@@ -268,3 +268,43 @@ does here.
    The observer assumes the computational graph is stable across your calibration runs.
    Your `Head.forward` branches on `past_k is not None` — make sure your calibration
    always uses the same branch (e.g. always pass or always omit `past_kvs`).
+
+---
+
+## Implementation Checklist & Order
+
+If you are implementing this from scratch (e.g., in `nanogpt-quantize.py` or a notebook), follow this precise order to avoid the pitfalls mentioned above:
+
+**Step 1: Setup & FP32 Baseline**
+- Deepcopy the trained model to CPU: `model_cpu = copy.deepcopy(model).cpu()`.
+- Create a CPU context tensor: `context = torch.zeros((1, 1), dtype=torch.long, device='cpu')`.
+- Implement `benchmark_generate()` (ensuring it runs entirely on CPU).
+- Implement a disk-based size check using `torch.save` to `temp.pt` and `os.path.getsize()` to avoid the `model_size_mb` undercounting gotcha.
+- Measure and print FP32 baseline latency and size.
+
+**Step 2: Dynamic Quantization**
+- Deepcopy `model_cpu` to `model_dq`.
+- Run `torch.quantization.quantize_dynamic(model_dq, {nn.Linear}, dtype=torch.qint8)`.
+- Inspect `model_dq.blocks[0].sa.proj` to verify it is a `DynamicQuantizedLinear`.
+- Generate text to verify qualitative output.
+- Benchmark and record Dynamic INT8 latency and disk size.
+
+**Step 3: Static Quantization — Fusion & Prep**
+- Deepcopy `model_cpu` to `model_sq`.
+- Iterate through `model_sq.blocks` and apply `torch.quantization.fuse_modules(block.ffwd.net, [['0', '1']])` to fuse Linear+ReLU.
+- Set `model_sq.qconfig = torch.quantization.get_default_qconfig('fbgemm')` (or `qnnpack` if on ARM/Mac).
+- Run `torch.quantization.prepare(model_sq, inplace=True)`.
+
+**Step 4: Calibration (Careful with Control Flow!)**
+- Set `model_sq.eval()` and use `with torch.no_grad():`.
+- **Address Gotcha #4**: Ensure you calibrate using only one execution path. Because `Head.forward` branches based on `past_kvs`, do your calibration pass strictly doing standard forward passes without KV caching (or strictly with, but don't mix).
+- Pass ~100 batches of training/val CPU data through the model to let the observers collect min/max stats.
+
+**Step 5: Static Quantization — Conversion**
+- Run `torch.quantization.convert(model_sq, inplace=True)`.
+- Inspect `model_sq.blocks[0].sa.proj` to verify it is a `QuantizedLinear` (with fixed scales/zero points).
+- Generate text to verify it still works.
+- Benchmark and record Static INT8 latency and disk size.
+
+**Step 6: Final Comparison**
+- Print the comparison table of FP32 vs Dynamic INT8 vs Static INT8.
