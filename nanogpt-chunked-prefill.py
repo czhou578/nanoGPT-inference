@@ -476,7 +476,7 @@ def chunked_prefill_generate(model, request_queue: list[Request], token_budget: 
                     prefilling_requests.append(new_req)
                     queue_idx += 1
 
-            if remaining_budget > 0 and prefilling_requests:
+            if remaining_budget > 0 and prefilling_requests: # only slice the next chunk if budget allows and there are requests waiting to be pref
                 p_req = prefilling_requests[0]
                 tokens_left = len(p_req.prompt_tokens) - p_req.prefill_cursor
                 chunk_size = min(remaining_budget, tokens_left) # chunk_end equivalent
@@ -510,7 +510,7 @@ def chunked_prefill_generate(model, request_queue: list[Request], token_budget: 
                 
                 else:
                     logits, _, new_kvs = model(prefill_chunk_tokens, pos=pos)
-                
+
                 for li, bkv in enumerate(new_kvs):
                     for hi, (k, v) in enumerate(bkv):
                         p_req.kv_cache[(li, hi)] = (k, v)
@@ -523,6 +523,7 @@ def chunked_prefill_generate(model, request_queue: list[Request], token_budget: 
                     p_req.generated_tokens.append(idx_next.item())
                     p_req.status = "active"
                     p_req.last_token = idx_next
+
                     active_requests.append(p_req)
                     prefilling_requests.pop(0)
             
