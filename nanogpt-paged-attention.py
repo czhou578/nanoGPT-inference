@@ -170,6 +170,42 @@ def find_cached_prefix(block_cache: BlockCache, prompt_tokens, block_size):
     
     return num_cached
 
+def load_cached_blocks_to_pool(request, block_cache, pool, block_size):
+    """
+    Load cached KV blocks onto a request's physical block table and return how many tokens were cached. 
+    Sets request.prefill_cursor and request.num_filled_slots to skip past the cached portion.
+    """
+
+    parent_hash = NONE_HASH
+    num_cached = 0
+    prompt_tokens = request.prompt_tokens
+
+    for start in range(0, len(prompt_tokens), block_size):
+        end = start + block_size
+        if end > len(prompt_tokens): break
+
+        chunk = prompt_tokens[start:end]
+        chunk_hash = hash_block_tokens(parent_hash, chunk)
+        cached = block_cache.lookup(chunk_hash) # returns block. 
+
+        if cached is None: break
+
+        block_idx = num_cached // block_size
+        phys_block = request.block_table[block_idx]
+
+        for (layer, head), (k, v) in cached.kv_data.items():
+            pool.k_pool[(layer, head)][phys_block, :, :] = k.squeeze(0)
+            pool.v_pool[(layer, head)][phys_block, :, :] = v.squeeze(0)
+
+        num_cached += block_size
+        parent_hash = chunk_hash
+    
+    request.prefill_cursor = num_cached
+    request.num_filled_slots = num_cached
+    request._committed_blocks = num_cached // block_size
+
+    return num_cached
+
 @dataclass
 class Request:
     """Each in-flight generation carries its own state and KV cache."""
@@ -358,7 +394,10 @@ class Scheduler:
         if self.block_allocator.num_free < blocks_needed:
             return
 
-        needed_compute = min(prompt_len, self.token_budget)
+        num_cached = find_cached_prefix(self.block_cache, candidate.prompt_tokens, self.block_size)
+        actual_compute = prompt_len - num_cached
+
+        needed_compute = min(actual_compute, self.token_budget)
 
         if self.current_compute_tokens + needed_compute > self.token_budget: return
 
@@ -367,6 +406,10 @@ class Scheduler:
 
         candidate.block_table = self.block_allocator.allocate_n(blocks_needed)
         candidate.num_filled_slots = 0
+        candidate.arrival_time = step
+
+        if num_cached > 0 and hasattr(self, 'pool'):
+            load_cached_blocks_to_pool(candidate, self.block_cache, self.pool, self.block_size)
 
         self.prefilling.append(candidate)     
 
@@ -819,6 +862,7 @@ def interleaved_generate(model, requests, policy="fcfs", token_budget=16, max_kv
     num_blocks = max_kv_tokens // block_size
     pool = KVBlockPool(num_blocks, block_size, n_layer, n_head, head_size, device)
     scheduler.block_allocator = BlockAllocator(num_blocks)
+    scheduler.pool = pool
 
     step = 0
 
