@@ -817,3 +817,40 @@ assert req_a.block_table[:shared_blocks] == req_b.block_table[:shared_blocks]
 6. **The pool size determines max concurrent tokens.** With `num_blocks=64` and `block_size=4`, you can hold at most 256 tokens across all active requests. Size the pool based on `max_kv_tokens / block_size`.
 
 7. **Position embedding limit.** Your position embedding table has `block_size=32` entries (positions 0–31). This limits total sequence length to 32 regardless of how many blocks you have. PagedAttention doesn't change this — it's a model architecture constraint.
+
+## Detailed Implementation Steps
+
+If you are implementing this from scratch, follow these detailed step-by-step instructions:
+
+1. **Step 1: Setup Memory Infrastructure (Hint 1 & 5)**
+   - Implement the `KVBlockPool` class. Pre-allocate the massive `k_pool` and `v_pool` tensors for all layers and heads using `torch.zeros`.
+   - Implement the `BlockAllocator` class. Create a free list of integers `[0, 1, ..., num_blocks-1]` and add methods to `allocate_one`, `allocate_n`, and `free_blocks_for_request`.
+
+2. **Step 2: Implement Scatter & Gather Operations (Hint 3 & 4)**
+   - Write `write_kv_to_pool`: Loop over new tokens, calculate `logical_pos`, determine `block_idx` and `slot_idx`, look up the physical block in the `block_table`, and write the data in-place to the pool.
+   - Write `gather_kv_from_pool`: Calculate how many full blocks and trailing slots there are. Gather them from the pool, use `torch.cat` to stitch them together into a contiguous tensor, and return it.
+
+3. **Step 3: Update the Request Dataclass (Hint 2)**
+   - Update your `Request` dataclass (or create `PagedRequest`).
+   - Remove the old `kv_cache` dictionary.
+   - Add `block_table: List[int] = field(default_factory=list)` and `num_filled_slots: int = 0`.
+
+4. **Step 4: Rewrite Batch Assembly (Hint 7)**
+   - Update your pre-forward batch assembly (`assemble_batch_cache`). Instead of reading `req.kv_cache`, iterate over requests and use `gather_kv_from_pool` to retrieve their past KV.
+   - Update your post-forward batch disassembly. Extract the newest token's KV and use `write_kv_to_pool` to scatter it back into the pool. Don't forget to increment `num_filled_slots`.
+
+5. **Step 5: Integrate with the Scheduler (Hint 8)**
+   - In `_maybe_admit`: Calculate `blocks_needed = ceil(prompt_len / block_size)`. Check if the allocator has enough blocks. If so, allocate them and assign to `candidate.block_table`.
+   - In `complete`: When a request finishes, call `allocator.free_blocks_for_request` to return its blocks to the pool.
+
+6. **Step 6: Update the Generate Loop (Hint 8)**
+   - Pass the `pool` and `block_allocator` into your continuous batching/generate loop.
+   - Before the decode forward pass, loop over `decode_reqs` and check if their current block is full (`num_filled_slots % block_size == 0`). If full, allocate 1 new physical block and append it to the block table.
+
+7. **Step 7: Testing & Verification (Test Scenarios)**
+   - Run **Test 1** to ensure that outputs match the original contiguous implementation exactly. This is your sanity check!
+   - Run **Tests 2-4** to verify that blocks are properly allocated and freed when requests complete.
+
+8. **Step 8: (Optional) Prefix Caching (Hint 9)**
+   - Only after everything else works: Update `CachedBlock` to hold a `phys_block` index instead of raw tensor data.
+   - During `load_cached_blocks`, just append `cached.phys_block` to the request's `block_table` instead of copying data.
