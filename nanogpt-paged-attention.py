@@ -1,3 +1,5 @@
+import enum
+from numpy import dtype
 import torch
 import torch.nn as nn
 import time
@@ -622,3 +624,71 @@ for iter in range(max_iters):
 # Quick sanity check with the original no-cache generate
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
 print(decode(m.generate(context, max_new_tokens=200)[0].tolist()))
+
+def assemble_paged_cache(requests, pool, block_size):
+    """
+    Gather per-request KV from the paged pool into batched tensors.
+    Same interface as assemble_batch_cache — returns left-padded batched cache.
+    """
+
+
+    B = len(requests)
+
+    lengths = [req.num_filled_slots for req in requests]
+    max_t = max(lengths) if lengths else 0
+    pad_lengths = [max_t - t for t in lengths]
+
+    attn_mask = torch.zeros(B, 1, max_t, device=device, dtype=torch.bool)
+
+    for i, pad in enumerate(pad_lengths):
+        attn_mask[i, :, pad:] = True
+    
+    past_kvs = []
+
+    for layer_idx in range(n_layer):
+        block_kv = []
+
+        for head_idx in range(n_head):
+            keys, values = [], []
+
+            for i, req in enumerate(requests):
+                k, v  = gather_kv_from_pool(pool, req.block_table, block_size, req.num_filled_slots, layer_idx, head_idx)
+                
+                if pad_lengths[i] > 0:
+                    hs = k.shape[2]
+                    pad_tensor = torch.zeros(1, pad_lengths[i], hs, device=device)
+                    k = torch.cat([pad_tensor, k], dim=1)
+                    v = torch.cat([pad_tensor, v], dim=1)
+                
+                keys.append(k)
+                values.append(v)
+            
+            block_kv.append((torch.cat(keys, dim=0), torch.cat(values, dim=0)))
+        
+        past_kvs.append(block_kv)
+
+    return past_kvs, attn_mask, pad_lengths
+
+def disassemble_paged_cache(requests, new_kvs, pad_lengths, pool, block_size):
+    """
+    Scatter new KV data from model output back into the paged pool.
+    Each request gets 1 new KV entry (decode token).
+    """
+
+    for layer_idx, block_kv in enumerate(new_kvs):
+        for head_idx, (batched_k, batched_v) in enumerate(block_kv):
+            for i, req in enumerate(requests):
+                pad = pad_lengths[i]
+                
+                k_new = batched_k[i: i + 1, pad:, :]
+                v_new = batched_v[i: i + 1, pad:, :]
+
+                write_kv_to_pool(pool, req.block_table, block_size,
+                req.num_filled_slots, k_new, v_new, layer_idx, head_idx) 
+
+    for req in requests:
+        req.num_filled_slots += 1
+
+
+           
+
