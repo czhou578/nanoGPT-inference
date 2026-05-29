@@ -1,13 +1,10 @@
-import enum
-from numpy import dtype
 import torch
 import torch.nn as nn
+from torch.nn import functional as F
 import time
 import heapq
-from torch.nn import functional as F
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple
-import hashlib
 
 # hyperparameters
 batch_size = 16 # how many independent sequences will we process in parallel?
@@ -67,6 +64,8 @@ def estimate_loss():
     model.train()
     return out
 
+import hashlib
+
 NONE_HASH = b'\x00' * 16  # sentinel for the first block (no parent)
 
 def hash_block_tokens(parent_hash, token_ids):
@@ -112,39 +111,6 @@ class BlockCache:
         oldest = min(self.cache.values(), key=lambda b: b.last_access_step)
         del self.cache[oldest.block_hash]
 
-class KVBlockPool:
-    """
-    Pre-allocated GPU memory pool for KV cache blocks.
-    
-    Physical layout: one big tensor per (layer, head, k/v).
-    Shape: (num_physical_blocks, block_size, head_size)
-    
-    Block i occupies pool[i, :, :] — a fixed-size (block_size, head_size) slab.
-    """
-
-    def __init__(self, num_blocks, block_size, n_layer, n_head, head_size, device):
-       self.num_blocks = num_blocks
-       self.block_size = block_size
-
-       self.k_pool = {}
-       self.v_pool = {}
-
-       for layer in range(n_layer):
-         for head in range(n_head):
-           self.k_pool[(layer, head)] = torch.zeros(
-             num_blocks,
-             block_size,
-             head_size,
-             device=device
-           )
-
-           self.v_pool[(layer, head)] = torch.zeros(
-             num_blocks,
-             block_size,
-             head_size,
-             device=device
-           )
-
 def find_cached_prefix(block_cache: BlockCache, prompt_tokens, block_size):
     """
         Walk the prompt left-to-right in block-sized chunks.
@@ -170,15 +136,14 @@ def find_cached_prefix(block_cache: BlockCache, prompt_tokens, block_size):
     
     return num_cached
 
-def load_cached_blocks_to_pool(request, block_cache, pool, block_size):
-    """
-    Load cached KV blocks onto a request's physical block table and return how many tokens were cached. 
-    Sets request.prefill_cursor and request.num_filled_slots to skip past the cached portion.
+def load_cached_blocks(request, block_cache, prompt_tokens, block_size):
+    """ 
+    Load cached KV blocks onto a request and return how many tokens were cached. 
+    Sets request.prefill_cursor to skip past the cached potion
     """
 
     parent_hash = NONE_HASH
     num_cached = 0
-    prompt_tokens = request.prompt_tokens
 
     for start in range(0, len(prompt_tokens), block_size):
         end = start + block_size
@@ -190,19 +155,21 @@ def load_cached_blocks_to_pool(request, block_cache, pool, block_size):
 
         if cached is None: break
 
-        block_idx = num_cached // block_size
-        phys_block = request.block_table[block_idx]
-
         for (layer, head), (k, v) in cached.kv_data.items():
-            pool.k_pool[(layer, head)][phys_block, :, :] = k.squeeze(0)
-            pool.v_pool[(layer, head)][phys_block, :, :] = v.squeeze(0)
+            if (layer, head) in request.kv_cache:
+                existing_k, existing_v = request.kv_cache[(layer, head)]
+
+                request.kv_cache[(layer, head)] = (
+                    torch.cat([existing_k, k.clone()], dim=1),
+                    torch.cat([existing_v, v.clone()], dim=1)
+                )
+            else:
+                request.kv_cache[(layer, head)] = (k.clone(), v.clone())
 
         num_cached += block_size
         parent_hash = chunk_hash
     
     request.prefill_cursor = num_cached
-    request.num_filled_slots = num_cached
-    request._committed_blocks = num_cached // block_size
 
     return num_cached
 
@@ -212,15 +179,17 @@ class Request:
     id: int
     prompt_tokens: List[int]          # the original encoded prompt
     max_new_tokens: int               # how many tokens this request wants
-    generated_tokens: List[int] = field(default_factory=list) # what we generated
+    generated_tokens: List[int] = field(default_factory=list)
     status: str = "waiting"           # "waiting" -> "prefilling" -> "active" -> "done"
     prefill_cursor: int = 0
     _committed_blocks: int = 0
 
-    block_table: List[int] = field(default_factory=list)
-    num_filled_slots: int = 0
-    priority: int = 0
-    arrival_time: int = 0
+    # Hint 2: Per-request KV cache, keyed by (layer_idx, head_idx)
+    # Each value is a (key_tensor, value_tensor) tuple of shape (1, T_i, head_size)
+    # T_i grows by 1 each decode step — different requests have different T_i
+    kv_cache: Dict[Tuple[int, int], Tuple[torch.Tensor, torch.Tensor]] = field(
+        default_factory=dict
+    )
 
     @property
     def tokens_so_far(self) -> List[int]:
@@ -239,108 +208,8 @@ class Request:
     def is_fully_prefilled(self) -> bool:
         return self.prefill_cursor == len(self.prompt_tokens)
 
-    def clear_cache(self, block_allocator):
-        block_allocator.free_blocks_for_request(self.block_table)
-        self.block_table = []
-        self.num_filled_slots = 0
-
-def write_kv_to_pool(pool, block_table, block_size, start_pos, k_new, v_new, layer, head):
-    """
-    Write new KV data into the physical pool using the block table.
-    
-    Args:
-        pool:        KVBlockPool
-        block_table: list of physical block indices for this request
-        block_size:  tokens per block
-        start_pos:   logical position of the first new token
-        k_new:       (1, T_new, head_size) — new key data
-        v_new:       (1, T_new, head_size) — new value data
-    """
-
-    T_new = k_new.shape[1]
-
-    for t in range(T_new):
-        logical_pos = start_pos + t
-        block_idx = logical_pos // block_size
-        slot_idx = logical_pos % block_size
-
-        phys_block = block_table[block_idx]
-
-        pool.k_pool[(layer, head)][phys_block, slot_idx, :] = k_new[0, t, :]
-        pool.v_pool[(layer, head)][phys_block, slot_idx, :] = v_new[0, t, :]
-
-def maybe_allocate_block(request, block_allocator, block_size):
-    """Allocate a new physical block if the current one is full."""
-
-    if request.num_filled_slots % block_size == 0:
-        new_block = block_allocator.allocate_one()
-        request.block_table.append(new_block)
-
-def gather_kv_from_pool(pool, block_table, block_size, num_filled, layer, head):
-    """
-    Gather a request's KV cache from the physical pool into a contiguous tensor.
-    
-    Returns:
-        k: (1, num_filled, head_size)
-        v: (1, num_filled, head_size)
-    """
-
-    if num_filled == 0:
-        hs = pool.k_pool[(layer, head)].shape[-1]
-        device = pool.k_pool[(layer, head)].device
-        return (
-            torch.empty(1, 0, hs, device=device),
-            torch.empty(1, 0, hs, device=device),
-        )
-
-    num_full_blocks = num_filled // block_size
-    trailing_slots = num_filled % block_size
-
-    k_parts, v_parts = [], []
-
-    for i in range(num_full_blocks):
-        phys_block = block_table[i]
-
-        k_parts.append(pool.k_pool[(layer, head)][phys_block, :, :])
-        v_parts.append(pool.v_pool[(layer, head)][phys_block, :, :])
-    
-    if trailing_slots > 0:
-        phys_block = block_table[num_full_blocks]
-
-        k_parts.append(pool.k_pool[(layer, head)][phys_block, :trailing_slots, :])
-        v_parts.append(pool.v_pool[(layer, head)][phys_block, :trailing_slots, :])
-
-    k_cat = torch.cat(k_parts, dim=0).unsqueeze(0)
-    v_cat = torch.cat(v_parts, dim=0).unsqueeze(0)
-
-    return k_cat, v_cat
-
-
-class BlockAllocator:
-    def __init__(self, num_blocks, block_size=4):
-        self.num_blocks = num_blocks
-        self.block_size = block_size
-        self.free_blocks = list(range(num_blocks))
-
-    def allocate_one(self):
-        if not self.free_blocks:
-            raise MemoryError("No free blocks available")
-        
-        return self.free_blocks.pop()
-
-    def allocate_n(self, n):
-        if len(self.free_blocks) < n:
-            raise MemoryError("No free blocks available")
-        
-        return [self.free_blocks.pop() for _ in range(n)]
-
-    def free_blocks_for_request(self, block_table):
-        self.free_blocks.extend(block_table)
-
-    @property
-    def num_free(self):
-        return len(self.free_blocks)
-
+    def clear_cache(self):
+        self.kv_cache.clear()
 
 class Scheduler:
     def __init__(self, policy="fcfs", max_batch_size=4, token_budget=16, max_kv_tokens=22, block_size=4):
@@ -350,13 +219,11 @@ class Scheduler:
         self.max_kv_tokens = max_kv_tokens
         self.block_size = block_size
         self.block_cache = BlockCache()
-        self.block_allocator = None
-        self.current_compute_tokens = 0
 
         self.waiting = []
         self.prefilling = []
         self.active = []
-        self.preempted = []     
+        self.preempted = []
 
     def promote(self, req):
         self.prefilling.remove(req)
@@ -364,11 +231,8 @@ class Scheduler:
         self.active.append(req)
     
     def complete(self, req):
-        if req in self.active:
-            
-            self.active.remove(req)
+        self.active.remove(req)
         req.status = "done"
-        self.block_allocator.free_blocks_for_request(req.block_table) 
 
     def _sort_key(self, req):
         if self.policy == "fcfs":
@@ -378,49 +242,50 @@ class Scheduler:
     
     def add_request(self, req):
         key = self._sort_key(req)
-        heapq.heappush(self.waiting, (*key, req.id, req))      
-
+        heapq.heappush(self.waiting, (*key, req.id, req))
+    
     def is_done(self):
-        return not (self.waiting or self.prefilling or self.active)   
-
+        return not (self.waiting or self.prefilling or self.active)
+    
     def _maybe_admit(self, step):
-        if not self.waiting: return
-
-        _, _, _, candidate = self.waiting[0]
-        prompt_len = len(candidate.prompt_tokens)
-
-        blocks_needed = (prompt_len + self.block_size - 1) // self.block_size
-
-        if self.block_allocator.num_free < blocks_needed:
+        if self.prefilling:
+            return
+        
+        if not self.waiting:
             return
 
+        kv_used = sum(len(req.prompt_tokens) + req.num_generated for req in self.active + self.prefilling)
+
+        _, _, _, candidate = self.waiting[0]
+
         num_cached = find_cached_prefix(self.block_cache, candidate.prompt_tokens, self.block_size)
-        actual_compute = prompt_len - num_cached
 
-        needed_compute = min(actual_compute, self.token_budget)
+        # print(f"[step {step}] Admitting req {req.id}: "
+        #     f"{num_cached}/{len(req.prompt_tokens)} tokens cached "
+        #     f"({num_cached // BLOCK_SIZE} blocks hit), "
+        #     f"{len(req.prompt_tokens) - num_cached} tokens to prefill")
 
-        if self.current_compute_tokens + needed_compute > self.token_budget: return
+
+        actual_kv_cost = len(candidate.prompt_tokens) - num_cached
+
+        if kv_used + actual_kv_cost > self.max_kv_tokens:
+            return
+        
+        if len(self.active) + len(self.prefilling) >= self.max_batch_size: return
 
         heapq.heappop(self.waiting)
-        candidate.status = "prefilling"
-
-        candidate.block_table = self.block_allocator.allocate_n(blocks_needed)
-        candidate.num_filled_slots = 0
+        load_cached_blocks(candidate, self.block_cache, candidate.prompt_tokens, self.block_size)
         candidate.arrival_time = step
-
-        if num_cached > 0 and hasattr(self, 'pool'):
-            load_cached_blocks_to_pool(candidate, self.block_cache, self.pool, self.block_size)
-
-        self.prefilling.append(candidate)     
-
-
+        candidate.status = "prefilling"
+        self.prefilling.append(candidate)
+    
     def _maybe_preempt(self):
         kv_used = sum(len(req.prompt_tokens) + req.num_generated for req in self.active + self.prefilling)
 
         while self.active and kv_used > self.max_kv_tokens:
             victim = max(self.active, key=lambda r: (r.priority, -r.arrival_time))
             self.active.remove(victim)
-            victim.clear_cache(self.block_allocator)
+            victim.clear_cache()
             victim.prefill_cursor = 0
             victim.generated_tokens = []
             victim.status = "waiting"
@@ -543,6 +408,7 @@ class MultiHeadAttention(nn.Module):
         out = self.dropout(self.proj(out))
         return out, new_kvs
 
+
 class FeedFoward(nn.Module):
     """A simple linear layer followed by a non-linearity."""
 
@@ -557,6 +423,7 @@ class FeedFoward(nn.Module):
 
     def forward(self, x):
         return self.net(x)
+
 
 class Block(nn.Module):
     """Transformer block: communication followed by computation."""
@@ -677,24 +544,31 @@ for iter in range(max_iters):
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
 print(decode(m.generate(context, max_new_tokens=200)[0].tolist()))
 
-def assemble_paged_cache(requests, pool, block_size):
+def assemble_batch_cache(requests):
     """
-    Gather per-request KV from the paged pool into batched tensors.
-    Same interface as assemble_batch_cache — returns left-padded batched cache.
-    """
+    Gather per-request KV caches into batched tensors.
+    LEFT-pads shorter caches so new tokens always land at the right edge.
 
+    Big problem: You have 3 active requests. Each owns its own KV cache. You need to feed them to the model as one
+    batched tensor. But their caches have different lengths:
+
+    Returns:
+        past_kvs:    batched cache structure  [layer][head] = (B, T_max, hs)
+        attn_mask:   (B, 1, T_max) bool — True = valid, False = padding
+        pad_lengths: list of int — how many pad positions per request (for disassembly)
+    """
 
     B = len(requests)
+    lengths = [req.kv_cache[(0, 0)][0].shape[1] for req in requests]
+    max_t = max(lengths)
 
-    lengths = [req.num_filled_slots for req in requests]
-    max_t = max(lengths) if lengths else 0
-    pad_lengths = [max_t - t for t in lengths]
+    pad_lengths = [max_t - t for t in lengths] # pad lengths for every position in t
 
     attn_mask = torch.zeros(B, 1, max_t, device=device, dtype=torch.bool)
 
     for i, pad in enumerate(pad_lengths):
-        attn_mask[i, :, pad:] = True
-    
+        attn_mask[i, 0, pad:] = True
+
     past_kvs = []
 
     for layer_idx in range(n_layer):
@@ -704,62 +578,23 @@ def assemble_paged_cache(requests, pool, block_size):
             keys, values = [], []
 
             for i, req in enumerate(requests):
-                k, v  = gather_kv_from_pool(pool, req.block_table, block_size, req.num_filled_slots, layer_idx, head_idx)
-                
+                k, v = req.kv_cache[(layer_idx, head_idx)]
                 if pad_lengths[i] > 0:
                     hs = k.shape[2]
-                    pad_tensor = torch.zeros(1, pad_lengths[i], hs, device=device)
-                    k = torch.cat([pad_tensor, k], dim=1)
-                    v = torch.cat([pad_tensor, v], dim=1)
-                
+                    pad = torch.zeros(1, pad_lengths[i], hs, device=device)
+                    k = torch.cat([pad, k], dim=1)
+                    v = torch.cat([pad, v], dim=1)
+
                 keys.append(k)
                 values.append(v)
-            
+
             block_kv.append((torch.cat(keys, dim=0), torch.cat(values, dim=0)))
-        
+
         past_kvs.append(block_kv)
 
     return past_kvs, attn_mask, pad_lengths
 
-def disassemble_paged_cache(requests, new_kvs, pad_lengths, pool, block_size):
-    """
-    Scatter new KV data from model output back into the paged pool.
-    Each request gets 1 new KV entry (decode token).
-    """
-
-    for layer_idx, block_kv in enumerate(new_kvs):
-        for head_idx, (batched_k, batched_v) in enumerate(block_kv):
-            for i, req in enumerate(requests):
-                pad = pad_lengths[i]
-                
-                k_new = batched_k[i: i + 1, -1:, :]
-                v_new = batched_v[i: i + 1, -1:, :]
-
-                write_kv_to_pool(pool, req.block_table, block_size,
-                req.num_filled_slots, k_new, v_new, layer_idx, head_idx) 
-
-    for req in requests:
-        req.num_filled_slots += 1
-
-def disassemble_paged_fused(all_reqs, new_kvs, num_new_per_req, pool, block_size):
-    """Like disassemble_paged_cache but handles variable new tokens per row."""
-    for layer_idx, block_kv in enumerate(new_kvs):
-        for head_idx, (batched_k, batched_v) in enumerate(block_kv):
-            for i, req in enumerate(all_reqs):
-                t_new = num_new_per_req[i]
-                k_new = batched_k[i:i+1, -t_new:, :]
-                v_new = batched_v[i:i+1, -t_new:, :]
-                
-                write_kv_to_pool(
-                    pool, req.block_table, block_size,
-                    req.num_filled_slots,
-                    k_new, v_new, layer_idx, head_idx
-                )
-    
-    for i, req in enumerate(all_reqs):
-        req.num_filled_slots += num_new_per_req[i]        
-
-def assemble_fused_batch(decode_reqs: List[Request], prefill_req, chunk_size, pool, block_size):
+def assemble_fused_batch(decode_reqs: List[Request], prefill_req, chunk_size):
     """
     Build a single (B, T_max) input tensor + batched cache for the fused forward pass.
 
@@ -779,167 +614,4 @@ def assemble_fused_batch(decode_reqs: List[Request], prefill_req, chunk_size, po
     num_new_tokens = []
     all_reqs = []
 
-    for req in decode_reqs:
-        all_reqs.append(req)
-        num_new_tokens.append(1)
-    
-    if prefill_req:
-        all_reqs.append(prefill_req)
-        num_new_tokens.append(chunk_size)
 
-    B = len(all_reqs)
-    T_max = max(num_new_tokens)
-
-    batch_tokens = []
-    batch_positions = []
-
-    for req in decode_reqs:
-        pos_val = len(req.tokens_so_far) - 1
-        row = [0] * (T_max - 1) + [pos_val]
-        batch_positions.append(row)
-
-        token_row = [0] * (T_max - 1) + [req.tokens_so_far[-1]]
-        batch_tokens.append(token_row)
-    
-    if prefill_req:
-        cursor = prefill_req.prefill_cursor
-
-        chunk_positions = list(range(cursor, cursor + chunk_size))
-
-        padding = [0] * (T_max - chunk_size)
-
-        batch_positions.append(padding + chunk_positions)
-
-        chunk = prefill_req.prompt_tokens[cursor: cursor + chunk_size]
-        pad = [0] * (T_max - chunk_size)
-
-        batch_tokens.append(pad + chunk)
-
-    batch_positions = torch.tensor(batch_positions, device=device)        
-    batch_tokens = torch.tensor(batch_tokens, dtype=torch.long, device=device)  
-    # Assemble KV cache 
-        
-    past_kvs, attn_mask, pad_lengths = assemble_paged_cache(all_reqs, pool, block_size)    
-    return batch_tokens, batch_positions, past_kvs, attn_mask, pad_lengths
-
-def commit_completed_blocks(request: Request, block_cache: BlockCache, block_size, pool):
-    """
-    After a prefill step, check if any new full blocks were completed.
-    If so, insert them into the global cache.
-    """
-
-    total_tokens = len(request.prompt_tokens) + request.num_generated
-    num_full_blocks = total_tokens // block_size    
-    
-    parent_hash = NONE_HASH
-    
-    for block_idx in range(num_full_blocks):
-        start = block_idx * block_size
-        end = start + block_size
-
-        chunk = request.tokens_so_far[start:end]
-        block_hash = hash_block_tokens(parent_hash, chunk)
-
-        if block_idx >= request._committed_blocks:
-            kv_data = {}
-            phys_block = request.block_table[block_idx]
-
-            for layer in range(n_layer):
-                for head in range(n_head):
-                    kv_data[(layer, head)] = (
-                        pool.k_pool[(layer, head)][phys_block].unsqueeze(0).clone(),
-                        pool.v_pool[(layer, head)][phys_block].unsqueeze(0).clone(),
-                    )
-            
-            block_cache.insert(block_hash, tuple(chunk), kv_data)
-
-        parent_hash = block_hash
-    
-    request._committed_blocks = num_full_blocks
-           
-def interleaved_generate(model, requests, policy="fcfs", token_budget=16, max_kv_tokens=256):
-    scheduler = Scheduler(policy, token_budget=token_budget, max_kv_tokens=max_kv_tokens, block_size=block_size)
-    head_size = n_embd // n_head
-    num_blocks = max_kv_tokens // block_size
-    pool = KVBlockPool(num_blocks, block_size, n_layer, n_head, head_size, device)
-    scheduler.block_allocator = BlockAllocator(num_blocks)
-    scheduler.pool = pool
-
-    step = 0
-
-    for req in requests:
-        req.arrival_time = step
-        scheduler.add_request(req)
-    
-    model.eval()
-
-    with torch.no_grad():
-        while not scheduler.is_done():
-            prefill_req, decode_reqs = scheduler.schedule(step)
-
-            chunk_size = 0
-            remaining_budget = token_budget - len(decode_reqs)
-
-            if remaining_budget > 0 and prefill_req is not None:
-                tokens_left = len(prefill_req.prompt_tokens) - prefill_req.prefill_cursor
-
-                chunk_size = min(remaining_budget, tokens_left)
-            
-            if chunk_size == 0 and not decode_reqs:
-                step += 1
-                continue
-            
-            for req in decode_reqs:
-                maybe_allocate_block(req, scheduler.block_allocator, block_size)
-
-            batch_tokens, batch_positions, past_kvs, attn_mask, pad_lengths = assemble_fused_batch(
-                decode_reqs, 
-                prefill_req if chunk_size > 0 else None, 
-                chunk_size,
-                pool,
-                block_size
-            )
-
-            logits, _, new_kvs = model(
-                batch_tokens,
-                pos=batch_positions,
-                past_kvs=past_kvs,
-                attn_mask=attn_mask
-            )     
-
-            all_reqs = decode_reqs[:]
-            num_new_tokens_per_req = [1] * len(decode_reqs)
-
-            if chunk_size > 0:
-                all_reqs.append(prefill_req)
-                num_new_tokens_per_req.append(chunk_size)
-                
-            disassemble_paged_fused(all_reqs, new_kvs, num_new_tokens_per_req, pool, block_size)  # CHANGED
-
-            if len(decode_reqs) > 0:
-                logits_decode = logits[:len(decode_reqs), -1, :]
-                probs = F.softmax(logits_decode, dim=-1)
-                idx_next = torch.multinomial(probs, num_samples=1)
-
-                for i, req in enumerate(decode_reqs):
-                    req.generated_tokens.append(idx_next[i].item())
-                    req._last_token = idx_next[i : i + 1]
-                    if req.is_done:
-                        scheduler.complete(req)
-            
-            if chunk_size > 0:
-                prefill_req.prefill_cursor += chunk_size
-            
-                if prefill_req.is_fully_prefilled:
-                    prefill_logits = logits[-1:, -1, :]
-                    probs = F.softmax(prefill_logits, dim=-1)
-                    idx_next = torch.multinomial(probs, num_samples=1)
-                    
-                    prefill_req.generated_tokens.append(idx_next.item())
-                    prefill_req._last_token = idx_next
-                    commit_completed_blocks(prefill_req, scheduler.block_cache, block_size, pool)
-                    scheduler.promote(prefill_req)
-
-            step += 1
-
-    return scheduler   
