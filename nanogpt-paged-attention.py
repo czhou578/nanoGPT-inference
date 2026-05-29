@@ -212,7 +212,7 @@ class Request:
     id: int
     prompt_tokens: List[int]          # the original encoded prompt
     max_new_tokens: int               # how many tokens this request wants
-    generated_tokens: List[int] = field(default_factory=list)
+    generated_tokens: List[int] = field(default_factory=list) # what we generated
     status: str = "waiting"           # "waiting" -> "prefilling" -> "active" -> "done"
     prefill_cursor: int = 0
     _committed_blocks: int = 0
@@ -389,7 +389,7 @@ class Scheduler:
         _, _, _, candidate = self.waiting[0]
         prompt_len = len(candidate.prompt_tokens)
 
-        blocks_needed = (prompt_len + self.block_size - 1) // block_size
+        blocks_needed = (prompt_len + self.block_size - 1) // self.block_size
 
         if self.block_allocator.num_free < blocks_needed:
             return
@@ -422,6 +422,7 @@ class Scheduler:
             self.active.remove(victim)
             victim.clear_cache(self.block_allocator)
             victim.prefill_cursor = 0
+            victim.generated_tokens = []
             victim.status = "waiting"
             self.preempted.append(victim)
 
@@ -731,8 +732,8 @@ def disassemble_paged_cache(requests, new_kvs, pad_lengths, pool, block_size):
             for i, req in enumerate(requests):
                 pad = pad_lengths[i]
                 
-                k_new = batched_k[i: i + 1, pad:, :]
-                v_new = batched_v[i: i + 1, pad:, :]
+                k_new = batched_k[i: i + 1, -1:, :]
+                v_new = batched_v[i: i + 1, -1:, :]
 
                 write_kv_to_pool(pool, req.block_table, block_size,
                 req.num_filled_slots, k_new, v_new, layer_idx, head_idx) 
@@ -857,7 +858,7 @@ def commit_completed_blocks(request: Request, block_cache: BlockCache, block_siz
     request._committed_blocks = num_full_blocks
            
 def interleaved_generate(model, requests, policy="fcfs", token_budget=16, max_kv_tokens=256):
-    scheduler = Scheduler(policy, token_budget=token_budget, max_kv_tokens=max_kv_tokens)
+    scheduler = Scheduler(policy, token_budget=token_budget, max_kv_tokens=max_kv_tokens, block_size=block_size)
     head_size = n_embd // n_head
     num_blocks = max_kv_tokens // block_size
     pool = KVBlockPool(num_blocks, block_size, n_layer, n_head, head_size, device)
