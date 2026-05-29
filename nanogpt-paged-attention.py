@@ -294,3 +294,45 @@ class BlockAllocator:
     @property
     def num_free(self):
         return len(self.free_blocks)
+
+
+class Scheduler:
+    def __init__(self, policy="fcfs", max_batch_size=4, token_budget=16, max_kv_tokens=22, block_size=4):
+        self.policy = policy
+        self.max_batch_size = max_batch_size
+        self.token_budget = token_budget
+        self.max_kv_tokens = max_kv_tokens
+        self.block_size = block_size
+        self.block_cache = BlockCache()
+        self.block_allocator = None
+        self.current_compute_tokens = 0
+
+        self.waiting = []
+        self.prefilling = []
+        self.active = []
+        self.preempted = []     
+
+    def promote(self, req):
+        self.prefilling.remove(req)
+        req.status = "active"
+        self.active.append(req)
+    
+    def complete(self, req):
+        if req in self.active:
+            
+            self.active.remove(req)
+        req.status = "done"
+        self.block_allocator.free_blocks_for_request(req.block_table) 
+
+    def _sort_key(self, req):
+        if self.policy == "fcfs":
+            return (0, req.arrival_time)
+        elif self.policy == "priority":
+            return (req.priority, req.arrival_time)
+    
+    def add_request(self, req):
+        key = self._sort_key(req)
+        heapq.heappush(self.waiting, (*key, req.id, req))      
+
+    def is_done(self):
+        return not (self.waiting or self.prefilling or self.active)                    
