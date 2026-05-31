@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Tuple
 import hashlib
 
-
 # hyperparameters
 batch_size = 16 # how many independent sequences will we process in parallel?
 block_size = 32 # what is the maximum context length for predictions?
