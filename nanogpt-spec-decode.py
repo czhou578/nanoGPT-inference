@@ -164,7 +164,12 @@ def accept_reject(candidates, draft_probs, target_probs):
             accepted.append(token)
         else:
             adjusted = torch.clamp(target_probs[i] - draft_probs[i], min=0)
-            adjusted = adjusted / adjusted.sum()
+            adj_sum = adjusted.sum()
+            if adj_sum > 0:
+                adjusted = adjusted / adj_sum
+            else:
+                # Fallback: float32 rounding made residual vanish; sample from target
+                adjusted = target_probs[i]
 
             resampled = torch.multinomial(adjusted, num_samples=1).item()
             accepted.append(resampled)
@@ -239,6 +244,7 @@ class BlockCache:
             block_hash=block_hash,
             token_ids=token_ids,
             kv_data=kv_data,
+            last_access_step=self.current_step,
         )
 
     def _evict_lru(self):
@@ -510,11 +516,13 @@ class Scheduler:
 
     
     def _maybe_preempt(self):
-        kv_used = sum(len(req.prompt_tokens) + req.num_generated for req in self.active + self.prefilling)
+        kv_blocks_used = sum(len(req.block_table) for req in self.active + self.prefilling)
+        max_kv_blocks = self.max_kv_tokens // self.block_size
 
-        while self.active and kv_used > self.max_kv_tokens:
+        while self.active and kv_blocks_used > max_kv_blocks:
             victim = max(self.active, key=lambda r: (r.priority, -r.arrival_time))
             self.active.remove(victim)
+            kv_blocks_used -= len(victim.block_table)
             victim.clear_cache(self.block_allocator)
             victim.prefill_cursor = 0
             victim.generated_tokens = []
@@ -523,7 +531,6 @@ class Scheduler:
 
             key = self._sort_key(victim)
             heapq.heappush(self.waiting, (*key, victim.id, victim))
-            kv_used = sum(len(req.prompt_tokens) + req.num_generated for req in self.active + self.prefilling)
 
     def schedule(self, step: int):
         """
@@ -861,6 +868,8 @@ def disassemble_paged_fused(all_reqs, new_kvs, num_new_per_req, pool, block_size
         for head_idx, (batched_k, batched_v) in enumerate(block_kv):
             for i, req in enumerate(all_reqs):
                 t_new = num_new_per_req[i]
+                if t_new == 0:
+                    continue
                 k_new = batched_k[i:i+1, -t_new:, :]
                 v_new = batched_v[i:i+1, -t_new:, :]
                 
@@ -948,7 +957,6 @@ def commit_completed_blocks(request: Request, block_cache: BlockCache, block_siz
     If so, insert them into the global cache.
     """
 
-    total_tokens = len(request.prompt_tokens) + request.num_generated
     num_full_blocks = request.prefill_cursor // block_size    
 
     parent_hash = NONE_HASH
