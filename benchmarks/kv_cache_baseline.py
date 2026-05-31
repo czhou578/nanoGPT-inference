@@ -219,7 +219,7 @@ def run_baseline_vs_kv_benchmark(
     model,
     prompt_tokens,
     *,
-    N=64,
+    N=32,
     device=None,
     block_size=None,
     seed=1337,
@@ -289,3 +289,36 @@ def run_baseline_vs_kv_benchmark(
 #     device=device,
 #     block_size=block_size,
 # )
+
+# 0.056769 M parameters
+# step 0: train loss 4.1800, val loss 4.1791
+# step 20: train loss 3.6074, val loss 3.6479
+# step 40: train loss 3.3261, val loss 3.3321
+# step 60: train loss 3.1051, val loss 3.1305
+# step 80: train loss 2.9561, val loss 2.9651
+# step 100: train loss 2.8319, val loss 2.8681
+# step 119: train loss 2.7760, val loss 2.7998
+
+# XJad, f zotg pyreds hosn avtfZISp.Tit iuominerl O? umr,n nu, d be e ths meth m ppan ;
+# Siinowame nf,of,om sHodngthetouc $ smad
+# Xadr :! .
+# xeaweN
+# IB bes,inlon'orakintcth, rOQWhrQd Toke ,s he lnFe j usene
+# method   | tokens | wall_time_s | tokens_per_s | ttft_ms
+# ---------+--------+-------------+--------------+--------
+# no_cache | 1024   | 6.4340      | 159.16       | 4.26
+# kv_cache | 1024   | 3.5868      | 285.49       | 3.53
+
+# KV-cache throughput speedup: 1.79x with N = 1024
+
+# batch_size = 8          # smaller training batches
+# block_size = 64        # keep same for now so your benchmark assumptions hold
+# max_iters = 120         # much faster than 5000
+# eval_interval = 20
+# learning_rate = 1e-3
+# device = 'cpu'          # force CPU
+# eval_iters = 10         # much faster validation
+# n_embd = 32             # was 64
+# n_head = 4              # 32 / 4 = 8 dim per head
+# n_layer = 4             # was 4
+# dropout = 0.0

@@ -138,7 +138,4 @@ Highest-value additions:
 
    Then print or plot scheduler behavior over time. This makes batching/chunked prefill much more meaningful.
 
-8. **Sampling controls**
-   Add `temperature`, `top_k`, `top_p`, and maybe repetition penalty. Not an inference optimization, but it makes the generator feel much more complete.
-
 My strongest recommendation: add **benchmarking + correctness tests before any more clever optimization**. At this point, those will make the biggest difference because they let you prove each fancy component still samples from the right model.

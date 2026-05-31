@@ -1,24 +1,39 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-import time
 import heapq
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple
 import hashlib
+from benchmarks.kv_cache_baseline import run_baseline_vs_kv_benchmark
 
 # hyperparameters
-batch_size = 16 # how many independent sequences will we process in parallel?
-block_size = 32 # what is the maximum context length for predictions?
-max_iters = 5000
-eval_interval = 100
+# batch_size = 16 # how many independent sequences will we process in parallel?
+# block_size = 32 # what is the maximum context length for predictions?
+# max_iters = 5000
+# eval_interval = 100
+# learning_rate = 1e-3
+# device = 'cuda' if torch.cuda.is_available() else 'cpu'
+# eval_iters = 200
+# n_embd = 64
+# n_head = 4
+# n_layer = 4
+# dropout = 0.0
+
+# hyperparameters for benchmarking
+
+batch_size = 8          # smaller training batches
+block_size = 64        # keep same for now so your benchmark assumptions hold
+max_iters = 120         # much faster than 5000
+eval_interval = 20
 learning_rate = 1e-3
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-eval_iters = 200
-n_embd = 64
-n_head = 4
-n_layer = 4
+device = 'cpu'          # force CPU
+eval_iters = 10         # much faster validation
+n_embd = 32             # was 64
+n_head = 4              # 32 / 4 = 8 dim per head
+n_layer = 4             # was 4
 dropout = 0.0
+
 # ------------
 
 torch.manual_seed(1337)
@@ -473,7 +488,8 @@ class Scheduler:
             
             self.active.remove(req)
         req.status = "done"
-        self.block_allocator.free_blocks_for_request(req.block_table)
+        if self.block_allocator:
+            self.block_allocator.free_blocks_for_request(req.block_table)
 
     def _sort_key(self, req):
         if self.policy == "fcfs":
@@ -496,7 +512,7 @@ class Scheduler:
 
         blocks_needed = (prompt_len + self.block_size - 1) // self.block_size
 
-        if self.block_allocator.num_free < blocks_needed:
+        if self.block_allocator and self.block_allocator.num_free < blocks_needed:
             return
         
         needed_compute = min(prompt_len, self.token_budget)
@@ -507,7 +523,8 @@ class Scheduler:
         *_, candidate = heapq.heappop(self.waiting)
         candidate.status = "prefilling"
 
-        candidate.block_table = self.block_allocator.allocate_n(blocks_needed)
+        if self.block_allocator:
+            candidate.block_table = self.block_allocator.allocate_n(blocks_needed)
 
         candidate.num_filled_slots = 0
 
@@ -1024,3 +1041,12 @@ def speculative_generate(target_model, draft_model, prompt_tokens, max_new_token
         current_token = accepted[-1]
 
     return generated[:max_new_tokens] 
+
+context = torch.zeros((1,), dtype=torch.long).tolist()
+run_baseline_vs_kv_benchmark(
+    model,
+    context,
+    N=2048,
+    device=device,
+    block_size=block_size,
+)
