@@ -60,3 +60,85 @@ If the goal is to build toward a **mini inference engine** that mirrors vLLM con
 ```
 
 Steps 1–4 are the highest-value and map directly to the vLLM architecture already studied. They also tie in nicely with the frontend visualizer project.
+
+Yes. If you already added batching, chunked prefill, scheduling, prefix caching, paged KV, speculative decoding, and INT8, the next best additions are less “new feature” and more “make this a serious tiny inference engine.”
+
+Highest-value additions:
+
+1. **Benchmark harness**
+   Add a repeatable benchmark suite with:
+   - tokens/sec
+   - time to first token
+   - inter-token latency
+   - batch throughput vs batch size
+   - prefill/decode split
+   - KV cache hit rate
+   - speculative acceptance rate
+   - memory used by KV blocks
+
+   This will make every optimization actually measurable.
+
+2. **Correctness equivalence tests**
+   This is probably the most important thing now. Add tests like:
+   - full forward logits == cached incremental logits
+   - unbatched output == continuously batched output
+   - contiguous KV output == paged KV output
+   - prefix-cached output == normal prefill output
+   - speculative decoding statistically matches target sampling
+
+   These catch almost every subtle bug in inference-engine work.
+
+3. **Refactor attention to fused QKV / fused multi-head tensors**
+   Karpathy nanoGPT’s separate `Head` modules are educational, but inefficient. A good next step is one `CausalSelfAttention` module with:
+
+   ```python
+   qkv = self.c_attn(x)
+   q, k, v = qkv.split(n_embd, dim=2)
+   q = q.view(B, T, n_head, head_size).transpose(1, 2)
+   ```
+
+   Then use `torch.nn.functional.scaled_dot_product_attention` when possible. This makes the model closer to real GPT implementations and opens the door to Flash Attention-style paths later.
+
+4. **`torch.inference_mode()` and optional AMP**
+   Wrap generation/serving in:
+
+   ```python
+   with torch.inference_mode():
+       ...
+   ```
+
+   On CUDA, add optional `torch.autocast(device_type="cuda", dtype=torch.float16)` or `bfloat16` if supported. This is more practically useful than INT8 for a tiny model.
+
+5. **Adaptive speculative decoding**
+   Instead of fixed `K`, adjust based on recent acceptance rate:
+   - high acceptance: increase `K`
+   - low acceptance: decrease `K`
+   - cap by remaining context/token budget
+
+   This is very realistic and not too hard.
+
+6. **Better draft model**
+   A bigram draft is nice, but a trigram/backoff n-gram draft would likely improve speculative acceptance a lot while staying simple:
+
+   ```text
+   use trigram if seen
+   else bigram
+   else unigram
+   ```
+
+   That would make speculative decoding visibly better without training a second transformer.
+
+7. **Streaming API / request simulator**
+   If your goal is a mini-vLLM, add a simple request simulator:
+   - random arrivals
+   - different prompt lengths
+   - different max generation lengths
+   - priorities
+   - cancellation
+
+   Then print or plot scheduler behavior over time. This makes batching/chunked prefill much more meaningful.
+
+8. **Sampling controls**
+   Add `temperature`, `top_k`, `top_p`, and maybe repetition penalty. Not an inference optimization, but it makes the generator feel much more complete.
+
+My strongest recommendation: add **benchmarking + correctness tests before any more clever optimization**. At this point, those will make the biggest difference because they let you prove each fancy component still samples from the right model.
