@@ -670,3 +670,23 @@ def run_normal_vs_chunked_prefill_benchmark(
 #     chunk_size=8,
 #     device=device,
 # )
+
+
+# run_single_vs_continuous_batching_benchmark(
+#     model,
+#     vocab_size=vocab_size,
+#     num_requests=32,
+#     prompt_len=8,
+#     max_new_tokens=24,
+#     max_batch_size=8,
+#     arrival_gap=0,
+#     device=device,
+# )
+
+# --------------------------+------+--------+--------+---------+-------------+-------------+------------+------------+-----------+-----------+----------
+# single_request_sequential | 32   | 768    | 1.7119 | 448.63  | 2.80        | 3.22        | 53.50      | 59.48      | 1.00      | 1         | 1.7101        
+# continuous_batching       | 9    | 216    | 0.1452 | 1487.26 | 10.87       | 20.99       | 86.44      | 90.43      | 4.50      | 8         | 0.1238        
+
+# Continuous batching throughput speedup: 3.32x
+# Average latency ratio: 1.62x
+# Average TTFT ratio: 3.88x
