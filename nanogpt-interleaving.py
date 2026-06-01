@@ -5,20 +5,36 @@ import time
 import heapq
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple
-
-# hyperparameters
-batch_size = 16 # how many independent sequences will we process in parallel?
-block_size = 32 # what is the maximum context length for predictions?
-max_iters = 5000
-eval_interval = 100
-learning_rate = 1e-3
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-eval_iters = 200
-n_embd = 64
-n_head = 4
-n_layer = 4
-dropout = 0.0
+from benchmarks.interleaving_benchmark_runs import (
+    run_interleaving_benchmark_suite,
+)
+# # hyperparameters
+# batch_size = 64 # how many independent sequences will we process in parallel?
+# block_size = 256 # what is the maximum context length for predictions?
+# max_iters = 5000
+# eval_interval = 500
+# learning_rate = 3e-4
+# device = 'cuda' if torch.cuda.is_available() else 'cpu'
+# eval_iters = 200
+# n_embd = 384
+# n_head = 6
+# n_layer = 6
+# dropout = 0.2
 # ------------
+
+# hyperparameters for testing
+
+batch_size = 8          # smaller training batches
+block_size = 64        # keep same for now so your benchmark assumptions hold
+max_iters = 120         # much faster than 5000
+eval_interval = 20
+learning_rate = 1e-3
+device = 'cuda'          # force GPU
+eval_iters = 10         # much faster validation
+n_embd = 32             # was 64
+n_head = 4              # 32 / 4 = 8 dim per head
+n_layer = 4             # was 4
+dropout = 0.0
 
 torch.manual_seed(1337)
 
@@ -613,5 +629,331 @@ def assemble_fused_batch(decode_reqs: List[Request], prefill_req, chunk_size):
 
     num_new_tokens = []
     all_reqs = []
+
+    for req in decode_reqs:
+        all_reqs.append(req)
+        num_new_tokens.append(1)
+    
+    if prefill_req:
+        all_reqs.append(prefill_req)
+        num_new_tokens.append(chunk_size)
+
+    B = len(all_reqs)
+    T_max = max(num_new_tokens)
+
+    batch_tokens = []
+    batch_positions = []
+
+    for req in decode_reqs:
+        pos_val = len(req.tokens_so_far) - 1
+        row = [0] * (T_max - 1) + [pos_val]
+        batch_positions.append(row)
+
+        token_row = [0] * (T_max - 1) + [req.tokens_so_far[-1]]
+        batch_tokens.append(token_row)
+    
+    if prefill_req:
+        cursor = prefill_req.prefill_cursor
+
+        chunk_positions = list(range(cursor, cursor + chunk_size))
+
+        padding = [0] * (T_max - chunk_size)
+
+        batch_positions.append(padding + chunk_positions)
+
+        chunk = prefill_req.prompt_tokens[cursor: cursor + chunk_size]
+        pad = [0] * (T_max - chunk_size)
+
+        batch_tokens.append(pad + chunk)
+
+    batch_positions = torch.tensor(batch_positions, device=device)        
+    batch_tokens = torch.tensor(batch_tokens, dtype=torch.long, device=device)  
+    # Assemble KV cache 
+
+    if prefill_req and not prefill_req.kv_cache:
+        head_size = n_embd // n_head
+
+        for li in range(n_layer):
+            for hi in range(n_head):
+                prefill_req.kv_cache[(li, hi)] = (
+                    torch.empty(1, 0, head_size, device=device),
+                    torch.empty(1, 0, head_size, device=device)
+                )
+        
+    past_kvs, attn_mask, pad_lengths = assemble_batch_cache(all_reqs)
+    
+    return batch_tokens, batch_positions, past_kvs, attn_mask, pad_lengths
+
+def disassemble_batch_cache(requests, new_kvs, pad_lengths):
+    """
+    Scatter batched KV cache back to per-request storage.
+    After Head's torch.cat, each row is (T_max + 1) — strip the left-padding.
+    """
+    for layer_idx, block_kv in enumerate(new_kvs):
+        for head_idx, (batched_k, batched_v) in enumerate(block_kv):
+            for i, req in enumerate(requests):
+                pad = pad_lengths[i]
+                req.kv_cache[(layer_idx, head_idx)] = (
+                    batched_k[i : i + 1, pad:, :],      # (1, T_i + 1, hs)
+                    batched_v[i : i + 1, pad:, :],
+                )
+
+def disassemble_fused_cache(requests, new_kvs, num_new_tokens_per_req):
+    for layer_idx, block_kv in enumerate(new_kvs):
+        for head_idx, (batched_k, batched_v) in enumerate(block_kv):
+            for i, req in enumerate(requests):
+
+                t_new = num_new_tokens_per_req[i]
+
+                k_new_valid = batched_k[i : i + 1, -t_new:, :]
+                v_new_valid = batched_v[i : i + 1, -t_new:, :]
+
+                if (layer_idx, head_idx) in req.kv_cache:
+                    k_old, v_old = req.kv_cache[(layer_idx, head_idx)]
+                    req.kv_cache[(layer_idx, head_idx)] = (
+                        torch.cat([k_old, k_new_valid], dim=1),
+                        torch.cat([v_old, v_new_valid], dim=1)
+                    )
+                else:
+                    req.kv_cache[(layer_idx, head_idx)] = (k_new_valid, v_new_valid)
+
+def commit_completed_blocks(request: Request, block_cache: BlockCache, block_size):
+    """
+    After a prefill step, check if any new full blocks were completed.
+    If so, insert them into the global cache.
+    """
+
+    total_tokens = len(request.prompt_tokens) + request.num_generated
+    num_full_blocks = request.prefill_cursor // block_size    
+
+    parent_hash = NONE_HASH
+
+    for block_idx in range(num_full_blocks):
+        start = block_idx * block_size
+        end = start + block_size
+
+        chunk = request.prompt_tokens[start:end]
+        block_hash = hash_block_tokens(parent_hash, chunk)
+
+        if block_idx >= request._committed_blocks:
+            kv_data = {}
+            for (layer, head), (k, v) in request.kv_cache.items():
+                kv_data[(layer, head)] = (
+                    k[:, start:end, :].clone(),
+                    v[:, start:end, :].clone()
+                )
+
+            block_cache.insert(block_hash, tuple(chunk), kv_data)
+
+        parent_hash = block_hash
+    
+    request._committed_blocks = num_full_blocks
+
+def build_tok_pos_kv(decode_reqs):
+    batch_tokens = torch.cat([req._last_token for req in decode_reqs])
+
+    batch_positions = torch.tensor([[len(req.tokens_so_far) - 1] for req in decode_reqs], device=device)
+
+    past_kvs, attn_mask, pad_lengths = assemble_batch_cache(decode_reqs)
+
+    return batch_tokens, batch_positions, past_kvs, attn_mask, pad_lengths
+
+def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_tokens=256):
+    scheduler = Scheduler(policy, token_budget=token_budget, max_kv_tokens=max_kv_tokens)
+
+    step = 0
+
+    for req in requests:
+        req.arrival_time = step
+        scheduler.add_request(req)
+    
+    model.eval()
+
+    with torch.no_grad():
+        while not scheduler.is_done():
+
+            prefill_req, decode_reqs = scheduler.schedule(step)
+
+            if prefill_req:
+            
+                prefill_chunk_tokens = []
+                
+                remaining_budget = token_budget - len(scheduler.active)
+
+                if remaining_budget > 0 and scheduler.prefilling:
+                    p_req = scheduler.prefilling[0]
+
+                    tokens_left = len(p_req.prompt_tokens) - p_req.prefill_cursor
+                    chunk_size = min(remaining_budget, tokens_left)
+
+                    chunk_start = p_req.prefill_cursor 
+
+                    chunk_tokens = p_req.prompt_tokens[chunk_start: chunk_start + chunk_size]
+
+                    prefill_chunk_tokens = torch.tensor([chunk_tokens], dtype=torch.long, device=device)
+
+                    p_req.prefill_cursor += chunk_size
+
+                if len(prefill_chunk_tokens) == 0 and not scheduler.active:
+                    step += 1
+                    continue
+
+                if len(prefill_chunk_tokens) > 0:
+                    pos = torch.arange(chunk_start, chunk_start + chunk_size, device=device).unsqueeze(0)
+
+                    if p_req.kv_cache:
+                        #  This format is wrong 
+                        # logits, _, new_kvs = model(prefill_chunk_tokens, past_kvs=req.kv_cache)
+                        # list[list[(k, v)]] is shape
+                        
+                        past_kvs = []
+                        for layer_idx in range(n_layer):
+                            block_kv = [(p_req.kv_cache[(layer_idx, hi)]) for hi in range(n_head)] 
+                            past_kvs.append(block_kv)
+                        
+                        logits, _, new_kvs = model(prefill_chunk_tokens, pos=pos, past_kvs=past_kvs)
+
+                    else:
+                        logits, _, new_kvs = model(prefill_chunk_tokens, pos=pos)
+
+                    for li, bkv in enumerate(new_kvs):
+                        for hi, (k, v) in enumerate(bkv):
+                            p_req.kv_cache[(li, hi)] = (k, v)
+
+
+                    logits = logits[:, -1, :]
+                    probs = F.softmax(logits, dim=-1)
+                    idx_next = torch.multinomial(probs, num_samples=1)
+
+                    if prefill_req.is_fully_prefilled:
+                        prefill_req.generated_tokens.append(idx_next.item())
+                        prefill_req._last_token = idx_next
+                        commit_completed_blocks(prefill_req, scheduler.block_cache, BLOCK_SIZE)
+                        # print(f"[step {step}] Committed {num_new_blocks} blocks from req {req.id} to cache "
+                        #     f"(cache size: {len(block_cache.cache)}/{block_cache.max_blocks})")                        
+                        scheduler.promote(prefill_req)
+
+            if decode_reqs:
+                B_active = len(scheduler.active)
+
+                batch_tokens, batch_positions, past_kvs, attn_mask, pad_lengths = build_tok_pos_kv(decode_reqs)
+
+                logits, _, new_kvs = model(
+                    batch_tokens,
+                    pos=batch_positions,
+                    past_kvs=past_kvs,
+                    attn_mask=attn_mask
+                )
+
+                logits = logits[:, -1, :]
+                probs = F.softmax(logits, dim=-1)
+                idx_next = torch.multinomial(probs, num_samples=1)
+
+                disassemble_batch_cache(decode_reqs, new_kvs, pad_lengths)
+                
+                for i, req in enumerate(decode_reqs):
+                    req.generated_tokens.append(idx_next[i].item())
+                    req._last_token = idx_next[i : i + 1]
+                
+                for req in decode_reqs:
+                    if req.is_done:
+                        scheduler.complete(req)
+            
+            step += 1
+        
+        return scheduler
+    
+## Interleave generate
+
+def interleaved_generate(model, requests, policy="fcfs", token_budget=16, max_kv_tokens=256):
+    scheduler = Scheduler(policy, token_budget=token_budget, max_kv_tokens=max_kv_tokens)
+
+    step = 0
+
+    for req in requests:
+        req.arrival_time = step
+        scheduler.add_request(req)
+
+    model.eval()
+
+    with torch.no_grad():
+        while not scheduler.is_done():
+            prefill_req, decode_reqs = scheduler.schedule(step)
+
+            chunk_size = 0
+            remaining_budget = token_budget - len(decode_reqs)
+
+            if remaining_budget > 0 and prefill_req is not None:
+                tokens_left = len(prefill_req.prompt_tokens) - prefill_req.prefill_cursor
+
+                chunk_size = min(remaining_budget, tokens_left)
+
+            if chunk_size == 0 and not decode_reqs:
+                step += 1
+                continue
+
+            # 3. ── SINGLE FUSED MODEL CALL ──
+            # Use your already-written helper to build the batched inputs
+            batch_tokens, batch_positions, past_kvs, attn_mask, pad_lengths = assemble_fused_batch(
+                decode_reqs, 
+                prefill_req if chunk_size > 0 else None, 
+                chunk_size
+            )
+
+            logits, _, new_kvs = model(
+                batch_tokens,
+                pos=batch_positions,
+                past_kvs=past_kvs,
+                attn_mask=attn_mask
+            )
+
+            ## DISASSEMBLY
+
+            all_reqs = decode_reqs[:]
+            num_new_tokens_per_req = [1] * len(decode_reqs)
+
+            if chunk_size > 0:
+                all_reqs.append(prefill_req)
+                num_new_tokens_per_req.append(chunk_size)
+                
+            disassemble_fused_cache(all_reqs, new_kvs, num_new_tokens_per_req)
+            
+            # 5. ── POST-PROCESSING ──
+            # Handle decode requests (they are the first N rows in the batch)
+
+            if len(decode_reqs) > 0:
+                logits_decode = logits[:len(decode_reqs), -1, :]
+                probs = F.softmax(logits_decode, dim=-1)
+                idx_next = torch.multinomial(probs, num_samples=1)
+
+                for i, req in enumerate(decode_reqs):
+                    req.generated_tokens.append(idx_next[i].item())
+                    req._last_token = idx_next[i : i + 1]
+                    if req.is_done:
+                        scheduler.complete(req)
+            
+            if chunk_size > 0:
+                prefill_req.prefill_cursor += chunk_size
+            
+                if prefill_req.is_fully_prefilled:
+                    prefill_logits = logits[-1:, -1, :]
+                    probs = F.softmax(prefill_logits, dim=-1)
+                    idx_next = torch.multinomial(probs, num_samples=1)
+                    
+                    prefill_req.generated_tokens.append(idx_next.item())
+                    prefill_req._last_token = idx_next
+                    commit_completed_blocks(prefill_req, scheduler.block_cache, scheduler.block_size)
+                    scheduler.promote(prefill_req)
+
+            step += 1
+
+    return scheduler                    
+
+run_interleaving_benchmark_suite(
+    m,
+    vocab_size=vocab_size,
+    device=device,
+    block_size=block_size,
+)
 
 
