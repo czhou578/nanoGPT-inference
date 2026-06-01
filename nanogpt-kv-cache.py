@@ -2,20 +2,37 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import time
+from benchmarks.kv_cache_baseline_benchmark_runs import (
+    run_kv_cache_baseline_benchmark_suite,
+)
 
-# hyperparameters
-batch_size = 64 # how many independent sequences will we process in parallel?
-block_size = 256 # what is the maximum context length for predictions?
-max_iters = 5000
-eval_interval = 500
-learning_rate = 3e-4
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-eval_iters = 200
-n_embd = 384
-n_head = 6
-n_layer = 6
-dropout = 0.2
+# # hyperparameters
+# batch_size = 64 # how many independent sequences will we process in parallel?
+# block_size = 256 # what is the maximum context length for predictions?
+# max_iters = 5000
+# eval_interval = 500
+# learning_rate = 3e-4
+# device = 'cuda' if torch.cuda.is_available() else 'cpu'
+# eval_iters = 200
+# n_embd = 384
+# n_head = 6
+# n_layer = 6
+# dropout = 0.2
 # ------------
+
+# hyperparameters for testing
+
+batch_size = 8          # smaller training batches
+block_size = 64        # keep same for now so your benchmark assumptions hold
+max_iters = 120         # much faster than 5000
+eval_interval = 20
+learning_rate = 1e-3
+device = 'cpu'          # force CPU
+eval_iters = 10         # much faster validation
+n_embd = 32             # was 64
+n_head = 4              # 32 / 4 = 8 dim per head
+n_layer = 4             # was 4
+dropout = 0.0
 
 torch.manual_seed(1337)
 
@@ -302,39 +319,10 @@ def generate_with_cache(model, idx, max_new_tokens):
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
     return idx
-
-# ── benchmark ─────────────────────────────────────────────────────────────────
-N_TOKENS   = 200
-N_RUNS     = 3       # average over multiple runs for stability
-context    = torch.zeros((1, 1), dtype=torch.long, device=device)
-
-# warm-up (avoids cold-start CUDA overhead skewing results)
-_ = generate_no_cache(model, context.clone(), 10)
-clear_kv_cache(model)
-_ = generate_with_cache(model, context.clone(), 10)
-
-# --- No KV cache ---
-times_no_cache = []
-for _ in range(N_RUNS):
-    t0 = time.perf_counter()
-    generate_no_cache(model, context.clone(), N_TOKENS)
-    if device == 'cuda':
-        torch.cuda.synchronize()
-    times_no_cache.append(time.perf_counter() - t0)
-
-# --- With KV cache ---
-times_with_cache = []
-for _ in range(N_RUNS):
-    t0 = time.perf_counter()
-    generate_kv_cache(model, context.clone(), N_TOKENS)
-    if device == 'cuda':
-        torch.cuda.synchronize()
-    times_with_cache.append(time.perf_counter() - t0)
-
-avg_no_cache = sum(times_no_cache) / N_RUNS
-avg_with_cache = sum(times_with_cache) / N_RUNS
-
-print(f"Tokens generated : {N_TOKENS}")
-print(f"No KV cache      : {avg_no_cache:.3f}s  ({N_TOKENS/avg_no_cache:.1f} tok/s)")
-print(f"With KV cache    : {avg_with_cache:.3f}s  ({N_TOKENS/avg_with_cache:.1f} tok/s)")
-print(f"Speedup          : {avg_no_cache/avg_with_cache:.2f}×")
+    
+run_kv_cache_baseline_benchmark_suite(
+    m,
+    train_data=train_data,
+    device=device,
+    block_size=block_size,
+)
