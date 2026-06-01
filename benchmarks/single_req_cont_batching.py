@@ -638,3 +638,83 @@ def run_single_vs_continuous_batching_benchmark(
 #     arrival_gap=0,
 #     device=device,
 # )
+
+# 0.056769 M parameters
+# step 0: train loss 4.1800, val loss 4.1791
+# step 20: train loss 3.6074, val loss 3.6479
+# step 40: train loss 3.3261, val loss 3.3321
+# step 60: train loss 3.1051, val loss 3.1305
+# step 80: train loss 2.9561, val loss 2.9651
+# step 100: train loss 2.8319, val loss 2.8681
+# step 119: train loss 2.7760, val loss 2.7998
+
+# XJndage zoth p reds, th MavtfZISp.Tit iu wheerlho? umr,n nu, d
+# method                    | reqs | tokens | wall_s | tok/s  | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms | avg_batch | max_batch | forward_s
+# --------------------------+------+--------+--------+--------+-------------+-------------+------------+------------+-----------+-----------+----------
+# single_request_sequential | 8    | 128    | 0.5815 | 220.10 | 5.20        | 7.90        | 72.69      | 109.61     | 1.00      | 1         | 0.5807
+# continuous_batching       | 5    | 80     | 0.1811 | 441.87 | 13.63       | 25.32       | 102.69     | 110.86     | 2.50      | 4         | 0.1559
+
+# Continuous batching throughput speedup: 2.01x
+# Average latency ratio: 1.41x
+# Average TTFT ratio: 2.62x
+
+
+
+# 0.056769 M parameters
+# step 0: train loss 4.1800, val loss 4.1791
+# step 20: train loss 3.6074, val loss 3.6479
+# step 40: train loss 3.3261, val loss 3.3321
+# step 60: train loss 3.1051, val loss 3.1305
+# step 80: train loss 2.9561, val loss 2.9651
+# step 100: train loss 2.8319, val loss 2.8681
+# step 119: train loss 2.7760, val loss 2.7998
+
+# XJndage zoth p reds, th MavtfZISp.Tit iu wheerlho? umr,n nu, d
+# method                    | reqs | tokens | wall_s | tok/s   | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms | avg_batch | max_batch | forward_s
+# --------------------------+------+--------+--------+---------+-------------+-------------+------------+------------+-----------+-----------+----------
+# single_request_sequential | 16   | 512    | 1.1123 | 460.29  | 2.85        | 3.23        | 69.52      | 73.43      | 1.00      | 1         | 1.1111        
+# continuous_batching       | 9    | 288    | 0.2027 | 1420.80 | 11.87       | 22.74       | 120.76     | 126.35     | 4.50      | 8         | 0.1679        
+
+# Continuous batching throughput speedup: 3.09x
+# Average latency ratio: 1.74x
+# Average TTFT ratio: 4.16x
+
+# with 
+
+#     vocab_size=vocab_size,
+#     num_requests=16,
+#     prompt_len=8,
+#     max_new_tokens=32,
+#     max_batch_size=8,
+#     arrival_gap=0,
+#     device=device,
+
+
+# 0.056769 M parameters
+# step 0: train loss 4.1800, val loss 4.1791
+# step 20: train loss 3.6074, val loss 3.6479
+# step 40: train loss 3.3261, val loss 3.3321
+# step 60: train loss 3.1051, val loss 3.1305
+# step 80: train loss 2.9561, val loss 2.9651
+# step 100: train loss 2.8319, val loss 2.8681
+# step 119: train loss 2.7760, val loss 2.7998
+
+# XJndage zoth p reds, th MavtfZISp.Tit iu wheerlho? umr,n nu, d
+# method                    | reqs | tokens | wall_s | tok/s  | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms | avg_batch | max_batch | forward_s
+# --------------------------+------+--------+--------+--------+-------------+-------------+------------+------------+-----------+-----------+----------
+# single_request_sequential | 32   | 768    | 3.4996 | 219.45 | 5.67        | 9.74        | 109.36     | 157.74     | 1.00      | 1         | 3.4951
+# continuous_batching       | 9    | 216    | 0.4582 | 471.44 | 31.02       | 67.90       | 273.70     | 286.68     | 4.50      | 8         | 0.3835
+
+# Continuous batching throughput speedup: 2.15x
+# Average latency ratio: 2.50x
+# Average TTFT ratio: 5.47x
+
+# run_single_vs_continuous_batching_benchmark(
+#     m, vocab_size=vocab_size,
+#     num_requests=32,
+#     prompt_len=8,
+#     max_new_tokens=24,
+#     max_batch_size=8,
+#     arrival_gap=0,
+#     device=device,
+# )

@@ -322,3 +322,90 @@ def run_baseline_vs_kv_benchmark(
 # n_head = 4              # 32 / 4 = 8 dim per head
 # n_layer = 4             # was 4
 # dropout = 0.0
+
+# 0.056769 M parameters
+# step 0: train loss 4.1800, val loss 4.1791
+# step 20: train loss 3.6074, val loss 3.6479
+# step 40: train loss 3.3261, val loss 3.3321
+# step 60: train loss 3.1051, val loss 3.1305
+# step 80: train loss 2.9561, val loss 2.9651
+# step 100: train loss 2.8319, val loss 2.8681
+# step 119: train loss 2.7760, val loss 2.7998
+
+# XJad, f zotg pyreds hosn avtfZISp.Tit iuominerl O? umr,n nu, d be e ths meth m ppan ;
+# Siinowame nf,of,om sHodngthetouc $ smad
+# Xadr :! .
+# xeaweN
+# IB bes,inlon'orakintcth, rOQWhrQd Toke ,s he lnFe j usene
+# method   | tokens | wall_time_s | tokens_per_s | ttft_ms
+# ---------+--------+-------------+--------------+--------
+# no_cache | 256    | 0.9670      | 264.74       | 2.46
+# kv_cache | 256    | 0.6445      | 397.21       | 2.73
+
+# KV-cache throughput speedup: 1.50x
+
+# C:\Users\mycol\WebProjects\multimodal-inference-visualizer>python nanogpt-spec-decode.py
+# 0.056769 M parameters
+# step 0: train loss 4.1800, val loss 4.1791
+# step 20: train loss 3.6074, val loss 3.6479
+# step 40: train loss 3.3261, val loss 3.3321
+# step 60: train loss 3.1051, val loss 3.1305
+# step 80: train loss 2.9561, val loss 2.9651
+# step 100: train loss 2.8319, val loss 2.8681
+# step 119: train loss 2.7760, val loss 2.7998
+
+# XJad, f zotg pyreds hosn avtfZISp.Tit iuominerl O? umr,n nu, d be e ths meth m ppan ;
+# Siinowame nf,of,om sHodngthetouc $ smad
+# Xadr :! .
+# xeaweN
+# IB bes,inlon'orakintcth, rOQWhrQd Toke ,s he lnFe j usene
+# method   | tokens | wall_time_s | tokens_per_s | ttft_ms
+# ---------+--------+-------------+--------------+--------
+# no_cache | 512    | 2.0161      | 253.96       | 2.84
+# kv_cache | 512    | 1.2754      | 401.46       | 2.75
+
+# KV-cache throughput speedup: 1.58x
+
+# C:\Users\mycol\WebProjects\multimodal-inference-visualizer>python nanogpt-spec-decode.py
+# 0.056769 M parameters
+# step 0: train loss 4.1800, val loss 4.1791
+# step 20: train loss 3.6074, val loss 3.6479
+# step 40: train loss 3.3261, val loss 3.3321
+# step 60: train loss 3.1051, val loss 3.1305
+# step 80: train loss 2.9561, val loss 2.9651
+# step 100: train loss 2.8319, val loss 2.8681
+# step 119: train loss 2.7760, val loss 2.7998
+
+# XJad, f zotg pyreds hosn avtfZISp.Tit iuominerl O? umr,n nu, d be e ths meth m ppan ;
+# Siinowame nf,of,om sHodngthetouc $ smad
+# Xadr :! .
+# xeaweN
+# IB bes,inlon'orakintcth, rOQWhrQd Toke ,s he lnFe j usene
+# method   | tokens | wall_time_s | tokens_per_s | ttft_ms
+# ---------+--------+-------------+--------------+--------
+# no_cache | 1024   | 6.4340      | 159.16       | 4.26
+# kv_cache | 1024   | 3.5868      | 285.49       | 3.53
+
+# KV-cache throughput speedup: 1.79x
+
+# C:\Users\mycol\WebProjects\multimodal-inference-visualizer>python nanogpt-spec-decode.py
+# 0.056769 M parameters
+# step 0: train loss 4.1800, val loss 4.1791
+# step 20: train loss 3.6074, val loss 3.6479
+# step 40: train loss 3.3261, val loss 3.3321
+# step 60: train loss 3.1051, val loss 3.1305
+# step 80: train loss 2.9561, val loss 2.9651
+# step 100: train loss 2.8319, val loss 2.8681
+# step 119: train loss 2.7760, val loss 2.7998
+
+# XJad, f zotg pyreds hosn avtfZISp.Tit iuominerl O? umr,n nu, d be e ths meth m ppan ;
+# Siinowame nf,of,om sHodngthetouc $ smad
+# Xadr :! .
+# xeaweN
+# IB bes,inlon'orakintcth, rOQWhrQd Toke ,s he lnFe j usene
+# method   | tokens | wall_time_s | tokens_per_s | ttft_ms
+# ---------+--------+-------------+--------------+--------
+# no_cache | 2048   | 8.9161      | 229.70       | 3.28
+# kv_cache | 2048   | 7.0630      | 289.96       | 2.92
+
+# KV-cache throughput speedup: 1.26x
