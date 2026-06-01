@@ -8,11 +8,8 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import time
-from benchmarks.single_req_cont_batching import (
-    RequestSpec,
-    StepMetrics,
-    RunMetrics,
-    run_single_vs_continuous_batching_benchmark
+from benchmarks.continuous_batching_benchmark_runs import (
+    run_continuous_batching_benchmark_suite,
 )
 
 # # hyperparameters
@@ -673,14 +670,11 @@ def continuous_batching_generate(model, request_queue: list[Request], max_batch_
 #     device=device,
 # )
 
-run_single_vs_continuous_batching_benchmark(
-    m, vocab_size=vocab_size,
-    num_requests=32,
-    prompt_len=8,
-    max_new_tokens=24,
-    max_batch_size=8,
-    arrival_gap=0,
+run_continuous_batching_benchmark_suite(
+    model,
+    vocab_size=vocab_size,
     device=device,
+    block_size=block_size,
 )
 
 # num_requests=16
