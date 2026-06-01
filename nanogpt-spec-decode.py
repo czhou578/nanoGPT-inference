@@ -5,7 +5,9 @@ import heapq
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple
 import hashlib
-from benchmarks.kv_cache_baseline import run_baseline_vs_kv_benchmark
+from benchmarks.speculative_decoding_benchmark_runs import (
+    run_speculative_decoding_benchmark_suite,
+)
 
 # hyperparameters
 # batch_size = 16 # how many independent sequences will we process in parallel?
@@ -1043,10 +1045,12 @@ def speculative_generate(target_model, draft_model, prompt_tokens, max_new_token
     return generated[:max_new_tokens] 
 
 context = torch.zeros((1,), dtype=torch.long).tolist()
-run_baseline_vs_kv_benchmark(
-    model,
-    context,
-    N=2048,
+
+run_speculative_decoding_benchmark_suite(
+    m,
+    vocab_size=vocab_size,
     device=device,
     block_size=block_size,
+    training_token_ids=train_data,
+    prompt_source_tokens=val_data,
 )
