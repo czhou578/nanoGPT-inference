@@ -5,10 +5,9 @@ import heapq
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple
 import hashlib
-from benchmarks.speculative_decoding_benchmark_runs import (
-    run_speculative_decoding_benchmark_suite,
+from benchmarks.trigram_speculative_decoding_benchmark_runs import (
+    run_trigram_speculative_decoding_benchmark_suite,
 )
-
 # hyperparameters
 # batch_size = 16 # how many independent sequences will we process in parallel?
 # block_size = 32 # what is the maximum context length for predictions?
@@ -1046,7 +1045,7 @@ def speculative_generate(target_model, draft_model, prompt_tokens, max_new_token
 
 context = torch.zeros((1,), dtype=torch.long).tolist()
 
-run_speculative_decoding_benchmark_suite(
+run_trigram_speculative_decoding_benchmark_suite(
     m,
     vocab_size=vocab_size,
     device=device,
