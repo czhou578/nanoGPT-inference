@@ -1,0 +1,143 @@
+0.056769 M parameters
+step 0: train loss 4.1800, val loss 4.1791
+step 20: train loss 3.6074, val loss 3.6479
+step 40: train loss 3.3261, val loss 3.3321
+step 60: train loss 3.1051, val loss 3.1305
+step 80: train loss 2.9561, val loss 2.9651
+step 100: train loss 2.8319, val loss 2.8681
+step 119: train loss 2.7760, val loss 2.7998
+
+XJndage zoth p reds, th MavtfZISp.Tit iu wheerlho? umr,n nu, d 
+
+=== Continuous Batching Benchmark Suite ===
+block_size=64, device=cpu
+
+
+=== small_smoke_test ===
+{'num_requests': 8, 'prompt_len': 8, 'max_new_tokens': 16, 'max_batch_size': 4, 'arrival_gap': 0}
+method                    | reqs | tokens | wall_s | tok/s  | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms | avg_batch | max_batch | forward_s
+--------------------------+------+--------+--------+--------+-------------+-------------+------------+------------+-----------+-----------+----------
+single_request_sequential | 8    | 128    | 0.4714 | 271.52 | 5.01        | 8.90        | 58.93      | 89.91      | 1.00      | 1         | 0.4708   
+continuous_batching       | 5    | 80     | 0.1526 | 524.11 | 9.70        | 15.44       | 80.78      | 83.90      | 2.50      | 4         | 0.1338   
+
+Continuous batching throughput speedup: 1.93x
+Average latency ratio: 1.37x
+Average TTFT ratio: 1.94x
+
+
+=== more_requests_small_batch ===
+{'num_requests': 16, 'prompt_len': 8, 'max_new_tokens': 24, 'max_batch_size': 4, 'arrival_gap': 0}
+method                    | reqs | tokens | wall_s | tok/s  | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms | avg_batch | max_batch | forward_s
+--------------------------+------+--------+--------+--------+-------------+-------------+------------+------------+-----------+-----------+----------
+single_request_sequential | 16   | 384    | 1.4387 | 266.90 | 5.27        | 10.02       | 89.92      | 122.15     | 1.00      | 1         | 1.4369   
+continuous_batching       | 5    | 120    | 0.2518 | 476.62 | 9.15        | 15.58       | 112.57     | 148.01     | 2.50      | 4         | 0.2217   
+
+Continuous batching throughput speedup: 1.79x
+Average latency ratio: 1.25x
+Average TTFT ratio: 1.74x
+
+
+=== more_requests_larger_batch ===
+{'num_requests': 16, 'prompt_len': 8, 'max_new_tokens': 24, 'max_batch_size': 8, 'arrival_gap': 0}
+method                    | reqs | tokens | wall_s | tok/s  | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms | avg_batch | max_batch | forward_s
+--------------------------+------+--------+--------+--------+-------------+-------------+------------+------------+-----------+-----------+----------
+single_request_sequential | 16   | 384    | 1.5924 | 241.15 | 5.57        | 9.29        | 99.52      | 128.29     | 1.00      | 1         | 1.5903   
+continuous_batching       | 9    | 216    | 0.2539 | 850.88 | 15.84       | 30.07       | 157.11     | 165.83     | 4.50      | 8         | 0.2074   
+
+Continuous batching throughput speedup: 3.53x
+Average latency ratio: 1.58x
+Average TTFT ratio: 2.85x
+
+
+=== longer_generations ===
+{'num_requests': 16, 'prompt_len': 8, 'max_new_tokens': 48, 'max_batch_size': 8, 'arrival_gap': 0}
+method                    | reqs | tokens | wall_s | tok/s  | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms | avg_batch | max_batch | forward_s
+--------------------------+------+--------+--------+--------+-------------+-------------+------------+------------+-----------+-----------+----------
+single_request_sequential | 16   | 768    | 2.8977 | 265.04 | 4.32        | 6.47        | 181.10     | 211.14     | 1.00      | 1         | 2.8934   
+continuous_batching       | 9    | 432    | 0.4516 | 956.53 | 17.21       | 34.67       | 272.66     | 286.14     | 4.50      | 8         | 0.3688   
+
+Continuous batching throughput speedup: 3.61x
+Average latency ratio: 1.51x
+Average TTFT ratio: 3.98x
+
+
+=== heavier_prompt ===
+{'num_requests': 16, 'prompt_len': 16, 'max_new_tokens': 32, 'max_batch_size': 8, 'arrival_gap': 0}
+method                    | reqs | tokens | wall_s | tok/s  | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms | avg_batch | max_batch | forward_s
+--------------------------+------+--------+--------+--------+-------------+-------------+------------+------------+-----------+-----------+----------
+single_request_sequential | 16   | 512    | 1.8428 | 277.84 | 5.17        | 8.82        | 115.17     | 168.76     | 1.00      | 1         | 1.8405   
+continuous_batching       | 9    | 288    | 0.5843 | 492.91 | 40.45       | 76.24       | 392.75     | 421.76     | 4.50      | 8         | 0.5103   
+
+Continuous batching throughput speedup: 1.77x
+Average latency ratio: 3.41x
+Average TTFT ratio: 7.83x
+
+
+=== stress_batch_capacity ===
+{'num_requests': 32, 'prompt_len': 8, 'max_new_tokens': 32, 'max_batch_size': 8, 'arrival_gap': 0}
+method                    | reqs | tokens | wall_s | tok/s  | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms | avg_batch | max_batch | forward_s
+--------------------------+------+--------+--------+--------+-------------+-------------+------------+------------+-----------+-----------+----------
+single_request_sequential | 32   | 1024   | 4.1515 | 246.66 | 5.69        | 10.38       | 129.73     | 192.19     | 1.00      | 1         | 4.1459   
+continuous_batching       | 9    | 288    | 0.4286 | 671.97 | 18.29       | 34.37       | 255.02     | 266.76     | 4.50      | 8         | 0.3511   
+
+Continuous batching throughput speedup: 2.72x
+Average latency ratio: 1.97x
+Average TTFT ratio: 3.21x
+
+
+=== Batch Size Sweep ===
+
+
+=== max_batch_size=1 ===
+method                    | reqs | tokens | wall_s | tok/s  | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms | avg_batch | max_batch | forward_s
+--------------------------+------+--------+--------+--------+-------------+-------------+------------+------------+-----------+-----------+----------
+single_request_sequential | 32   | 1024   | 4.6223 | 221.53 | 5.75        | 9.39        | 144.45     | 208.66     | 1.00      | 1         | 4.6164   
+continuous_batching       | 2    | 64     | 0.4274 | 149.76 | 10.68       | 11.40       | 213.66     | 238.33     | 1.00      | 1         | 0.3880   
+
+Continuous batching throughput speedup: 0.68x
+Average latency ratio: 1.48x
+Average TTFT ratio: 1.86x
+
+
+=== max_batch_size=2 ===
+method                    | reqs | tokens | wall_s | tok/s  | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms | avg_batch | max_batch | forward_s
+--------------------------+------+--------+--------+--------+-------------+-------------+------------+------------+-----------+-----------+----------
+single_request_sequential | 32   | 1024   | 4.0040 | 255.75 | 4.82        | 8.76        | 125.12     | 169.25     | 1.00      | 1         | 3.9988   
+continuous_batching       | 3    | 96     | 0.3889 | 246.86 | 6.75        | 8.31        | 190.82     | 205.18     | 1.50      | 2         | 0.3473   
+
+Continuous batching throughput speedup: 0.97x
+Average latency ratio: 1.53x
+Average TTFT ratio: 1.40x
+
+
+=== max_batch_size=4 ===
+method                    | reqs | tokens | wall_s | tok/s  | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms | avg_batch | max_batch | forward_s
+--------------------------+------+--------+--------+--------+-------------+-------------+------------+------------+-----------+-----------+----------
+single_request_sequential | 32   | 1024   | 3.7465 | 273.32 | 4.60        | 6.37        | 117.08     | 148.94     | 1.00      | 1         | 3.7415   
+continuous_batching       | 5    | 160    | 0.2636 | 607.05 | 8.01        | 13.47       | 149.45     | 161.36     | 2.50      | 4         | 0.2270   
+
+Continuous batching throughput speedup: 2.22x
+Average latency ratio: 1.28x
+Average TTFT ratio: 1.74x
+
+
+=== max_batch_size=8 ===
+method                    | reqs | tokens | wall_s | tok/s  | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms | avg_batch | max_batch | forward_s
+--------------------------+------+--------+--------+--------+-------------+-------------+------------+------------+-----------+-----------+----------
+single_request_sequential | 32   | 1024   | 4.3430 | 235.78 | 5.74        | 9.64        | 135.72     | 208.99     | 1.00      | 1         | 4.3372   
+continuous_batching       | 9    | 288    | 0.4423 | 651.10 | 21.57       | 42.95       | 240.84     | 246.62     | 4.50      | 8         | 0.3655   
+
+Continuous batching throughput speedup: 2.76x
+Average latency ratio: 1.77x
+Average TTFT ratio: 3.76x
+
+
+=== max_batch_size=16 ===
+method                    | reqs | tokens | wall_s | tok/s   | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms | avg_batch | max_batch | forward_s
+--------------------------+------+--------+--------+---------+-------------+-------------+------------+------------+-----------+-----------+----------
+single_request_sequential | 32   | 1024   | 4.1748 | 245.28  | 5.30        | 9.26        | 130.46     | 171.86     | 1.00      | 1         | 4.1691   
+continuous_batching       | 17   | 544    | 0.3703 | 1469.02 | 27.85       | 53.69       | 255.81     | 265.37     | 8.50      | 16        | 0.2807   
+
+Continuous batching throughput speedup: 5.99x
+Average latency ratio: 1.96x
+Average TTFT ratio: 5.25x

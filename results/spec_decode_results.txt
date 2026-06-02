@@ -1,0 +1,82 @@
+0.056769 M parameters
+step 0: train loss 4.1800, val loss 4.1791
+step 20: train loss 3.6074, val loss 3.6479
+step 40: train loss 3.3261, val loss 3.3321
+step 60: train loss 3.1051, val loss 3.1305
+step 80: train loss 2.9561, val loss 2.9651
+step 100: train loss 2.8321, val loss 2.8682
+step 119: train loss 2.7759, val loss 2.7995
+
+XJad, f zotg pyreds hosn avtfZISp.Tit iuominerl O? umr,n nu, d be e ths meth m ppan ;
+Siinowame nf,of,om sHodngthetouc $ smad
+Xadr :! .
+xeaweN
+IB bes,inlon'orakintcth, rOQWhrQd Toke ,s he lnFe j usene
+
+=== Speculative Decoding Benchmark Suite ===
+block_size=64, device=cpu
+
+
+=== k2_bigram_draft ===
+{'num_requests': 8, 'prompt_len': 24, 'max_new_tokens': 16, 'speculation_len': 2, 'draft_noise': 0.0}
+method         | reqs | prompt_tok | gen_tok | wall_s | gen_tok/s | target_calls | target_tok | tgt_tok/gen | avg_verify | accept | draft_tok | bonus | resample | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | forward_s
+---------------+------+------------+---------+--------+-----------+--------------+------------+-------------+------------+--------+-----------+-------+----------+-------------+-------------+------------+----------
+kv_decode      | 8    | 192        | 128     | 0.1428 | 896.05    | 128          | 312        | 2.44        | 0.00       | 0.0%   | 0         | 0     | 0        | 1.55        | 2.00        | 17.86      | 0.1364   
+spec_decode_k2 | 8    | 192        | 128     | 0.0928 | 1379.86   | 63           | 354        | 2.77        | 2.18       | 63.6%  | 107       | 28    | 24       | 1.36        | 1.51        | 11.59      | 0.0807   
+
+Speculative generated-token throughput ratio: 1.54x
+Target forward-call ratio: 0.49x
+Target tokens evaluated ratio: 1.13x
+Draft acceptance rate: 63.6%
+
+
+=== k4_bigram_draft ===
+{'num_requests': 8, 'prompt_len': 24, 'max_new_tokens': 16, 'speculation_len': 4, 'draft_noise': 0.0}
+method         | reqs | prompt_tok | gen_tok | wall_s | gen_tok/s | target_calls | target_tok | tgt_tok/gen | avg_verify | accept | draft_tok | bonus | resample | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | forward_s
+---------------+------+------------+---------+--------+-----------+--------------+------------+-------------+------------+--------+-----------+-------+----------+-------------+-------------+------------+----------
+kv_decode      | 8    | 192        | 128     | 0.1429 | 895.85    | 128          | 312        | 2.44        | 0.00       | 0.0%   | 0         | 0     | 0        | 1.60        | 1.91        | 17.86      | 0.1364   
+spec_decode_k4 | 8    | 192        | 128     | 0.0826 | 1549.35   | 55           | 401        | 3.13        | 2.55       | 48.1%  | 162       | 13    | 29       | 1.35        | 1.53        | 10.33      | 0.0703   
+
+Speculative generated-token throughput ratio: 1.73x
+Target forward-call ratio: 0.43x
+Target tokens evaluated ratio: 1.29x
+Draft acceptance rate: 48.1%
+
+
+=== k6_bigram_draft ===
+{'num_requests': 8, 'prompt_len': 24, 'max_new_tokens': 16, 'speculation_len': 6, 'draft_noise': 0.0}
+method         | reqs | prompt_tok | gen_tok | wall_s | gen_tok/s | target_calls | target_tok | tgt_tok/gen | avg_verify | accept | draft_tok | bonus | resample | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | forward_s
+---------------+------+------------+---------+--------+-----------+--------------+------------+-------------+------------+--------+-----------+-------+----------+-------------+-------------+------------+----------
+kv_decode      | 8    | 192        | 128     | 0.1363 | 938.86    | 128          | 312        | 2.44        | 0.00       | 0.0%   | 0         | 0     | 0        | 1.53        | 1.90        | 17.04      | 0.1302   
+spec_decode_k6 | 8    | 192        | 128     | 0.0792 | 1616.56   | 55           | 461        | 3.60        | 2.55       | 34.7%  | 222       | 6     | 37       | 1.27        | 1.52        | 9.90       | 0.0663   
+
+Speculative generated-token throughput ratio: 1.72x
+Target forward-call ratio: 0.43x
+Target tokens evaluated ratio: 1.48x
+Draft acceptance rate: 34.7%
+
+
+=== k4_noisy_draft ===
+{'num_requests': 8, 'prompt_len': 24, 'max_new_tokens': 16, 'speculation_len': 4, 'draft_noise': 0.5}
+method         | reqs | prompt_tok | gen_tok | wall_s | gen_tok/s | target_calls | target_tok | tgt_tok/gen | avg_verify | accept | draft_tok | bonus | resample | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | forward_s
+---------------+------+------------+---------+--------+-----------+--------------+------------+-------------+------------+--------+-----------+-------+----------+-------------+-------------+------------+----------
+kv_decode      | 8    | 192        | 128     | 0.1337 | 957.25    | 128          | 312        | 2.44        | 0.00       | 0.0%   | 0         | 0     | 0        | 1.48        | 1.81        | 16.71      | 0.1274   
+spec_decode_k4 | 8    | 192        | 128     | 0.0750 | 1707.07   | 51           | 392        | 3.06        | 2.79       | 52.2%  | 157       | 13    | 25       | 1.42        | 2.20        | 9.37       | 0.0635   
+
+Speculative generated-token throughput ratio: 1.78x
+Target forward-call ratio: 0.40x
+Target tokens evaluated ratio: 1.26x
+Draft acceptance rate: 52.2%
+
+
+=== longer_outputs_k4 ===
+{'num_requests': 6, 'prompt_len': 24, 'max_new_tokens': 24, 'speculation_len': 4, 'draft_noise': 0.0}
+method         | reqs | prompt_tok | gen_tok | wall_s | gen_tok/s | target_calls | target_tok | tgt_tok/gen | avg_verify | accept | draft_tok | bonus | resample | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | forward_s
+---------------+------+------------+---------+--------+-----------+--------------+------------+-------------+------------+--------+-----------+-------+----------+-------------+-------------+------------+----------
+kv_decode      | 6    | 144        | 144     | 0.1611 | 893.93    | 144          | 282        | 1.96        | 0.00       | 0.0%   | 0         | 0     | 0        | 1.69        | 1.91        | 26.85      | 0.1535   
+spec_decode_k4 | 6    | 144        | 144     | 0.0906 | 1589.45   | 59           | 394        | 2.74        | 2.60       | 46.2%  | 197       | 13    | 34       | 1.45        | 1.71        | 15.10      | 0.0764   
+
+Speculative generated-token throughput ratio: 1.78x
+Target forward-call ratio: 0.41x
+Target tokens evaluated ratio: 1.40x
+Draft acceptance rate: 46.2%

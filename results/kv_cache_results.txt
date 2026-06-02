@@ -1,0 +1,116 @@
+0.056769 M parameters
+step 0: train loss 4.1800, val loss 4.1795
+step 20: train loss 3.6072, val loss 3.6477
+step 40: train loss 3.3308, val loss 3.3400
+step 60: train loss 3.1136, val loss 3.1371
+step 80: train loss 2.9638, val loss 2.9796
+step 100: train loss 2.8327, val loss 2.8783
+step 119: train loss 2.7903, val loss 2.8249
+
+XJad, f zotg pyreds hosn avtfZISp.Tit iuominerl O? umr,n nu, d 
+
+=== KV Cache Baseline Benchmark Suite ===
+block_size=64, device=cpu
+
+
+=== small_smoke_test ===
+{'prompt_len': 8, 'N': 16}
+method   | tokens | wall_time_s | tokens_per_s | ttft_ms
+---------+--------+-------------+--------------+--------
+no_cache | 16     | 0.1263      | 126.67       | 5.26   
+kv_cache | 16     | 0.0861      | 185.93       | 7.15   
+
+KV-cache throughput speedup: 1.47x
+
+
+=== medium_generation ===
+{'prompt_len': 16, 'N': 32}
+method   | tokens | wall_time_s | tokens_per_s | ttft_ms
+---------+--------+-------------+--------------+--------
+no_cache | 32     | 0.3131      | 102.20       | 4.37   
+kv_cache | 32     | 0.1206      | 265.23       | 6.56   
+
+KV-cache throughput speedup: 2.60x
+
+
+=== longer_generation ===
+{'prompt_len': 16, 'N': 48}
+method   | tokens | wall_time_s | tokens_per_s | ttft_ms
+---------+--------+-------------+--------------+--------
+no_cache | 48     | 0.3344      | 143.56       | 3.84   
+kv_cache | 48     | 0.1735      | 276.58       | 3.64   
+
+KV-cache throughput speedup: 1.93x
+
+
+=== heavier_prompt ===
+{'prompt_len': 32, 'N': 32}
+method   | tokens | wall_time_s | tokens_per_s | ttft_ms
+---------+--------+-------------+--------------+--------
+no_cache | 32     | 0.2667      | 119.99       | 4.42   
+kv_cache | 32     | 0.1166      | 274.34       | 3.61   
+
+KV-cache throughput speedup: 2.29x
+
+
+=== near_context_limit ===
+{'prompt_len': 8, 'N': 56}
+method   | tokens | wall_time_s | tokens_per_s | ttft_ms
+---------+--------+-------------+--------------+--------
+no_cache | 56     | 0.2674      | 209.39       | 3.86   
+kv_cache | 56     | 0.2402      | 233.16       | 3.58   
+
+KV-cache throughput speedup: 1.11x
+
+
+=== Generation Length Sweep ===
+
+
+=== N=8 ===
+{'prompt_len': 8, 'N': 8}
+method   | tokens | wall_time_s | tokens_per_s | ttft_ms
+---------+--------+-------------+--------------+--------
+no_cache | 8      | 0.0359      | 222.60       | 7.60   
+kv_cache | 8      | 0.0291      | 275.18       | 3.29   
+
+KV-cache throughput speedup: 1.24x
+
+
+=== N=16 ===
+{'prompt_len': 8, 'N': 16}
+method   | tokens | wall_time_s | tokens_per_s | ttft_ms
+---------+--------+-------------+--------------+--------
+no_cache | 16     | 0.1457      | 109.83       | 4.93   
+kv_cache | 16     | 0.0826      | 193.64       | 10.41  
+
+KV-cache throughput speedup: 1.76x
+
+
+=== N=32 ===
+{'prompt_len': 8, 'N': 32}
+method   | tokens | wall_time_s | tokens_per_s | ttft_ms
+---------+--------+-------------+--------------+--------
+no_cache | 32     | 0.1419      | 225.47       | 4.32   
+kv_cache | 32     | 0.1407      | 227.41       | 3.41   
+
+KV-cache throughput speedup: 1.01x
+
+
+=== N=48 ===
+{'prompt_len': 8, 'N': 48}
+method   | tokens | wall_time_s | tokens_per_s | ttft_ms
+---------+--------+-------------+--------------+--------
+no_cache | 48     | 0.3678      | 130.52       | 3.62   
+kv_cache | 48     | 0.2059      | 233.10       | 5.75   
+
+KV-cache throughput speedup: 1.79x
+
+
+=== N=56 ===
+{'prompt_len': 8, 'N': 56}
+method   | tokens | wall_time_s | tokens_per_s | ttft_ms
+---------+--------+-------------+--------------+--------
+no_cache | 56     | 0.2964      | 188.92       | 4.47   
+kv_cache | 56     | 0.2034      | 275.38       | 3.39   
+
+KV-cache throughput speedup: 1.46x

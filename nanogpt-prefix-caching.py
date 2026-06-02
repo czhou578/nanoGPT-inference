@@ -6,20 +6,37 @@ import time
 import hashlib
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple
+from benchmarks.prefix_caching_benchmark_runs import (
+    run_prefix_caching_benchmark_suite,
+)
 
-# hyperparameters
-batch_size = 16 # how many independent sequences will we process in parallel?
-block_size = 32 # what is the maximum context length for predictions?
-max_iters = 5000
-eval_interval = 100
-learning_rate = 1e-3
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-eval_iters = 200    
-n_embd = 64
-n_head = 4
-n_layer = 4
-dropout = 0.0
+# # hyperparameters
+# batch_size = 64 # how many independent sequences will we process in parallel?
+# block_size = 256 # what is the maximum context length for predictions?
+# max_iters = 5000
+# eval_interval = 500
+# learning_rate = 3e-4
+# device = 'cuda' if torch.cuda.is_available() else 'cpu'
+# eval_iters = 200
+# n_embd = 384
+# n_head = 6
+# n_layer = 6
+# dropout = 0.2
 # ------------
+
+# hyperparameters for testing
+
+batch_size = 8          # smaller training batches
+block_size = 64        # keep same for now so your benchmark assumptions hold
+max_iters = 120         # much faster than 5000
+eval_interval = 20
+learning_rate = 1e-3
+device = 'cuda'          # force GPU
+eval_iters = 10         # much faster validation
+n_embd = 32             # was 64
+n_head = 4              # 32 / 4 = 8 dim per head
+n_layer = 4             # was 4
+dropout = 0.0
 
 torch.manual_seed(1337)
 
@@ -730,3 +747,10 @@ def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_t
             step += 1
     
     return scheduler
+
+run_prefix_caching_benchmark_suite(
+    m,
+    vocab_size=vocab_size,
+    device=device,
+    block_size=block_size,
+)

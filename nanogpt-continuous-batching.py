@@ -2,27 +2,43 @@ import enum
 import enum
 from typing import Tuple
 from typing import Dict
-from attr import field
 from typing import List
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import time
+from benchmarks.continuous_batching_benchmark_runs import (
+    run_continuous_batching_benchmark_suite,
+)
 
-# hyperparameters
-batch_size = 64 # how many independent sequences will we process in parallel?
-block_size = 256 # what is the maximum context length for predictions?
-max_iters = 5000
-eval_interval = 500
-learning_rate = 3e-4
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-eval_iters = 200
-n_embd = 384
-n_head = 6
-n_layer = 6
-dropout = 0.2
+# # hyperparameters
+# batch_size = 64 # how many independent sequences will we process in parallel?
+# block_size = 256 # what is the maximum context length for predictions?
+# max_iters = 5000
+# eval_interval = 500
+# learning_rate = 3e-4
+# device = 'cuda' if torch.cuda.is_available() else 'cpu'
+# eval_iters = 200
+# n_embd = 384
+# n_head = 6
+# n_layer = 6
+# dropout = 0.2
 # ------------
+
+# hyperparameters for testing
+
+batch_size = 8          # smaller training batches
+block_size = 64        # keep same for now so your benchmark assumptions hold
+max_iters = 120         # much faster than 5000
+eval_interval = 20
+learning_rate = 1e-3
+device = 'cpu'          # force CPU
+eval_iters = 10         # much faster validation
+n_embd = 32             # was 64
+n_head = 4              # 32 / 4 = 8 dim per head
+n_layer = 4             # was 4
+dropout = 0.0
 
 torch.manual_seed(1337)
 
@@ -62,7 +78,7 @@ def estimate_loss(): #evaluates average loss over multiple batches
         losses = torch.zeros(eval_iters)
         for k in range(eval_iters):
             X, Y = get_batch(split)
-            logits, loss = model(X, Y)
+            logits, loss, _ = model(X, Y)
             losses[k] = loss.item()
         out[split] = losses.mean()
     model.train()
@@ -184,7 +200,7 @@ class MultiHeadAttention(nn.Module):
             new_kv: list of (new_k, new_v) per head
         """        
         if past_kv is None:
-            past_kv = [(None, None) * len(self.heads)]
+            past_kv = [(None, None) for _ in range(len(self.heads))]
         
         outputs, new_kvs = [], []
         for i, h in enumerate(self.heads):
@@ -257,30 +273,40 @@ class GPTLanguageModel(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None, pos=0, past_kvs=None, attn_mask=None):
+    def forward(self, idx, targets=None, pos=None, past_kvs=None, attn_mask=None):
+        """
+        Args:
+            idx:      (B, T) token indices
+            targets:  (B, T) target indices, or None
+            pos:      (B, T) explicit position indices, or None (uses arange)
+            past_kvs: list-of-lists cache structure, or None
+                      past_kvs[layer][head] = (key_tensor, value_tensor)
+        Returns:
+            logits:   (B, T, vocab_size)
+            loss:     scalar or None
+            new_kvs:  updated cache with same structure as past_kvs
+        """
         B, T = idx.shape
-
-        # idx and targets are both (B,T) tensor of integers
-        tok_emb = self.token_embedding_table(idx) # (B,T,C)
+        tok_emb = self.token_embedding_table(idx)  # (B, T, C)
 
         if pos is None:
-            pos_emb = self.position_embedding_table(torch.arange(T, device=device))
+            pos_emb = self.position_embedding_table(torch.arange(T, device=device))  # (T, C)
         else:
-            pos_emb = self.position_embedding_table(pos)
+            pos_emb = self.position_embedding_table(pos)  # (B, T, C)
 
-        x = tok_emb + pos_emb # (B,T,C)
+        x = tok_emb + pos_emb  # (B, T, C)
 
+        # Thread cache through each block
         if past_kvs is None:
             past_kvs = [None] * len(self.blocks)
 
         new_kvs = []
-
         for i, block in enumerate(self.blocks):
-            x, block_kv = block(x, past_kvs[i], attn_mask)
+            x, block_kv = block(x, past_kvs[i], attn_mask=attn_mask)
             new_kvs.append(block_kv)
 
-        x = self.ln_f(x) # (B,T,C)
-        logits = self.lm_head(x) # (B,T,vocab_size)
+        x = self.ln_f(x)          # (B, T, C)
+        logits = self.lm_head(x)  # (B, T, vocab_size)
 
         loss = None
         if targets is not None:
@@ -314,7 +340,7 @@ def generate_kv_cache(model, idx, max_new_tokens):
     clear_kv_cache(model)
     
     # Prefill: process the initial context all at once
-    logits, _ = model(idx)
+    logits, _, _ = model(idx)
     
     for _ in range(max_new_tokens):
         # focus only on the last time step
@@ -327,7 +353,7 @@ def generate_kv_cache(model, idx, max_new_tokens):
         idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
         
         # Forward pass with ONLY the new token. We pass start_pos to get the right position embeddings.
-        logits, _ = model(idx_next, start_pos=idx.shape[1] - 1)
+        logits, _, _ = model(idx_next, pos=torch.tensor([idx.shape[1] - 1], dtype=torch.long, device=device))
         
     model.train()
     return idx
@@ -351,7 +377,7 @@ for iter in range(max_iters):
     xb, yb = get_batch('train')
 
     # evaluate the loss
-    logits, loss = model(xb, yb)
+    logits, loss, _ = model(xb, yb)
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
@@ -633,7 +659,28 @@ def continuous_batching_generate(model, request_queue: list[Request], max_batch_
     
     return completed_requests
             
+# run_single_vs_continuous_batching_benchmark(
+#     model,
+#     vocab_size=vocab_size,
+#     num_requests=16,
+#     prompt_len=8,
+#     max_new_tokens=32,
+#     max_batch_size=8,
+#     arrival_gap=0,
+#     device=device,
+# )
 
+run_continuous_batching_benchmark_suite(
+    model,
+    vocab_size=vocab_size,
+    device=device,
+    block_size=block_size,
+)
+
+# num_requests=16
+# prompt_len=8
+# max_new_tokens=32
+# max_batch_size=8
 
     
 
