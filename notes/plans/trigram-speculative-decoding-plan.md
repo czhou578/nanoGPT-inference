@@ -74,7 +74,7 @@ class TrigramDraftModel:
     Predicts P(next_token | prev_token, current_token) from training data.
     """
 
-    def __init__(self, token_ids, vocab_size, device, fallback_bigram=None):
+    def __init__(self, token_ids, vocab_size, device):
         counts = torch.zeros(vocab_size, vocab_size, vocab_size, dtype=torch.float32)
 
         ids = torch.as_tensor(token_ids, dtype=torch.long).flatten().cpu()
@@ -88,8 +88,21 @@ class TrigramDraftModel:
         self.probs = counts / counts.sum(dim=-1, keepdim=True)
         self.probs = self.probs.to(device)
         self.context_counts = self.context_counts.to(device)
-        self.fallback_bigram = fallback_bigram
 ```
+
+why do we need token_ids passed in
+why do we need float32 data type
+why do we need to flatten and then move to cpu
+
+[a, b, c] doesn't create intermediate tensors like [a][b][c]
+why do we keep dim = true
+
+counts:                (V, V, V)
+counts.sum(keepdim=True): (V, V, 1)
+counts:           (V, V, V)
+counts.sum():     (V, V)     ← shapes don't align for broadcast → error
+
+
 
 ### Why Not Just Smooth Everything?
 
@@ -128,6 +141,10 @@ def get_probs(self, prev_token_id, token_id, temperature=1.0):
 
     scaled = probs.clamp_min(1e-12).pow(1.0 / temperature)
     return scaled / scaled.sum()
+
+why do we need temperature: The draft model needs to support temperature because the rejection sampler requires that draft_probs[i] exactly matches the distribution that produced candidates[i]. If you sample at temperature 0.8 but return unscaled probs, the acceptance math is wrong and the target distribution is no longer preserved.
+
+why do we need to clamp_min. what is the behavior of this?
 
 def sample(self, prev_token_id, token_id, *, temperature=1.0, generator=None):
     probs = self.get_probs(prev_token_id, token_id, temperature=temperature)
@@ -327,6 +344,55 @@ Verify input:                 [current_token, candidate_0, candidate_1, ...]
 ```
 
 `prev_token` is not inserted into the verification input because it is already cached.
+
+Edited nanogpt-spec-decode.py
+Viewed trigram-speculative-decoding-plan.md:324-355
+
+The confusion usually comes from mixing up what the **draft model** needs vs. what the **target model** needs. They're separate.
+
+---
+
+## What the draft model needs
+
+The trigram draft needs two tokens of context to *propose* the next candidate:
+
+```
+prev_token, current_token  →  candidate_0
+current_token, candidate_0 →  candidate_1
+...
+```
+
+That's purely internal to `draft_tokens`. The target model never sees this.
+
+---
+
+## What the target model needs
+
+The target model runs a **single forward pass** over:
+
+```
+[current_token, candidate_0, candidate_1, ..., candidate_K-1]
+```
+
+Its KV cache already holds everything up to and including `prev_token`. So when you feed it `current_token`, it effectively "sees" `(prev_token, current_token)` through the cached attention — you don't need to re-feed `prev_token`.
+
+---
+
+## The mental slip
+
+The natural (wrong) instinct when upgrading to trigram is: *"the draft uses `prev_token`, so maybe I need to also feed it into verification."*
+
+**No.** `prev_token` is already in the KV cache. Feeding it again would shift the sequence:
+
+```
+# WRONG — shifts everything by 1, KV cache alignment breaks
+verify_input = [prev_token, current_token, candidate_0, ...]
+
+# CORRECT — KV cache already covers everything before current_token
+verify_input = [current_token, candidate_0, ...]
+```
+
+The rule is simple: **the verification input starts from where the KV cache ends.** The KV cache ends after `prev_token`, so verification starts at `current_token`. The extra context `prev_token` that the *draft* needed is irrelevant to the *verifier* — it's already cached.
 
 ---
 

@@ -1,3 +1,4 @@
+from numpy import dtype
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -98,17 +99,63 @@ class BigramDraftModel():
         self.probs = counts / counts.sum(dim=1, keepdim=True) # (vocab_size, vocab_size)
 
     
-    def get_probs(self, token_id):
+    def get_probs(self, token_id, temperature=1.0):
         """Return P(next | token_id) as a (vocab_size,) distribution."""
 
         return self.probs[token_id]
     
-    def sample(self, token_id):
+    def sample(self, token_id, temperature=1.0):
         """Sample one token given the current token."""
         probs = self.get_probs(token_id)
         return torch.multinomial(probs, num_samples=1).item(), probs
 
-def draft_tokens(draft_model, current_token, K):
+class TrigramDraftModel:
+    """
+    Draft model for speculative decoding.
+    Predicts P(next_token | prev_token, current_token) from training data.
+    """ 
+
+    def __init__(self, token_ids, vocab_size, device, fallback_bigram=None):
+        counts = torch.zeros(vocab_size, vocab_size, vocab_size, dtype=torch.float32)
+        ids = torch.as_tensor(token_ids, dtype=torch.long).flatten().cpu()
+
+        for a, b, c in zip(ids[:-2].tolist(), ids[1:-1].tolist(), ids[2:].tolist()):
+            if 0 <= a < vocab_size and 0 <= b < vocab_size and 0 <= c < vocab_size:
+                counts[a, b, c] += 1.0
+        
+        self.context_counts = counts.sum(dim=-1)
+        counts += 1.0
+        self.probs = counts / counts.sum(dim=-1, keepdims=True)
+        self.probs = self.probs.to(device)
+        self.context_counts = self.context_counts.to(device)
+        self.fallback_bigram = fallback_bigram
+    
+    def get_probs(self, prev_token_id, token_id, temperature=1.0):
+        """Return P(next | prev_token_id, token_id) as a (vocab_size,) distribution."""
+
+        prev_token_id = int(prev_token_id)
+        token_id = int(token_id)
+
+        min_context_count = 2
+        if self.context_counts[prev_token_id, token_id] < min_context_count:
+            probs = self.fallback_bigram.get_probs(token_id, temperature=temperature)
+        
+        else:
+            probs = self.probs[prev_token_id, token_id]
+
+        if temperature == 1.0: return probs
+
+        scaled = probs.clamp_min(1e-12).pow(1.0 / temperature)
+
+        return scaled / scaled.sum()
+
+    def sample(self, prev_token_id, token_id, *, temperature=1.0, generator=None):
+        probs = self.get_probs(prev_token_id, token_id, temperature=temperature)
+        next_token = torch.multinomial(probs, num_samples=1, generator=generator).item()
+        return next_token, probs
+
+
+def draft_tokens(draft_model, prev_token, current_token, K):
     """
     Generate K speculative tokens from the draft model.
 
@@ -119,13 +166,15 @@ def draft_tokens(draft_model, current_token, K):
 
     candidates = []
     draft_probs = []
-    tok = current_token
+    previous_token = prev_token
+    current_token = current_token
 
     for _ in range(K):
-        next_tok, prob = draft_model.sample(tok)
+        next_tok, prob = draft_model.sample(previous_token, current_token)
         candidates.append(next_tok)
         draft_probs.append(prob)
-        tok = next_tok
+        previous_token = current_token
+        current_token = next_tok
 
     return candidates, draft_probs    
 
@@ -1017,6 +1066,8 @@ def speculative_generate(target_model, draft_model, prompt_tokens, max_new_token
     current_token = torch.multinomial(probs, num_samples=1).item()
     generated.append(current_token)    
 
+    prev_token = prompt_tokens[-1]
+
     # 2. Speculative decode loop
     while len(generated) < max_new_tokens:
         cache_len = past_kvs[0][0][0].shape[1]  # current KV cache length
@@ -1025,14 +1076,14 @@ def speculative_generate(target_model, draft_model, prompt_tokens, max_new_token
         k = min(K, max_new_tokens - len(generated))
 
         # DRAFT
-        candidates, draft_probs = draft_tokens(draft_model, current_token, k)
+        candidates, draft_probs = draft_tokens(draft_model, prev_token, current_token, k)
 
         # VERIFY
         target_probs, new_kvs = verify_candidates(
             target_model, current_token, candidates, past_kvs
-        )    
+        )
 
-               # ACCEPT/REJECT
+        # ACCEPT/REJECT
         accepted = accept_reject(candidates, draft_probs, target_probs)
 
         # TRIM KV CACHE (keep only accepted tokens)
@@ -1040,7 +1091,10 @@ def speculative_generate(target_model, draft_model, prompt_tokens, max_new_token
 
         # Update state
         generated.extend(accepted)
-        current_token = accepted[-1]
+
+        # Update prev_token and current_token for next iteration
+        for tok in accepted:
+            prev_token, current_token = current_token, tok
 
     return generated[:max_new_tokens] 
 
