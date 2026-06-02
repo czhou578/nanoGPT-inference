@@ -102,12 +102,18 @@ class BigramDraftModel():
     def get_probs(self, token_id, temperature=1.0):
         """Return P(next | token_id) as a (vocab_size,) distribution."""
 
-        return self.probs[token_id]
+        probs = self.probs[token_id]
+
+        if temperature == 1.0: return probs
+
+        scaled = probs.clamp_min(1e-12).pow(1.0 / temperature)
+
+        return scaled / scaled.sum()
     
-    def sample(self, token_id, temperature=1.0):
+    def sample(self, token_id, temperature=1.0, generator=None):
         """Sample one token given the current token."""
-        probs = self.get_probs(token_id)
-        return torch.multinomial(probs, num_samples=1).item(), probs
+        probs = self.get_probs(token_id, temperature)
+        return torch.multinomial(probs, num_samples=1, generator=generator).item(), probs
 
 class TrigramDraftModel:
     """
