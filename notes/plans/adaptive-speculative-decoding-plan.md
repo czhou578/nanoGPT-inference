@@ -120,17 +120,67 @@ Useful state:
 | Field | Meaning |
 |---|---|
 | `current_k` | Speculation length to try next. |
-| `min_k` | Lower bound, usually `1` or `2`. |
-| `max_k` | Upper bound, maybe `6` or `8` for this tiny model. |
-| `recent_accepts` | Number of accepted draft tokens in the recent window. |
-| `recent_proposed` | Number of proposed draft tokens in the recent window. |
-| `recent_resamples` | Recent rejection/correction count. |
-| `recent_bonus` | Recent full-chain accept count. |
-| `verify_steps` | Number of speculative verification steps observed. |
+| `min_k` | Lower bound for speculation length. |
+| `max_k` | Upper bound for speculation length. |
+| `recent_accepts` | Accepted draft tokens in the recent window. |
+| `recent_proposed` | Proposed draft tokens in the recent window. |
+| `verify_steps` | Number of verification steps since the last possible adaptation. |
 
 Hint:
 
 > Put this state next to request state in the benchmark first. Once it works there, port the same idea into `nanogpt-trigram-spec-decode.py`.
+
+`choose_k()` decides how many draft tokens to speculate in the next speculative decoding step.
+
+In adaptive speculative decoding, `current_k` is the controller’s current guess for a good speculation length. If the draft model has been doing well, `current_k` may go up. If it has been getting rejected often, `current_k` may go down.
+
+```python
+def choose_k(self, remaining_tokens):
+    """Return the next speculation length without overshooting the request."""
+    return max(self.min_k, min(self.current_k, self.max_k, remaining_tokens))
+```
+
+The function clamps `current_k` between safe bounds:
+
+```python
+min(self.current_k, self.max_k, remaining_tokens)
+```
+
+This picks the smallest of:
+- `self.current_k`: the adaptive K value we want to try
+- `self.max_k`: the largest K we allow
+- `remaining_tokens`: how many tokens are still needed before generation is done
+
+Then:
+
+```python
+max(self.min_k, ...)
+```
+
+makes sure the result does not go below `min_k`.
+
+Example:
+
+```python
+self.current_k = 5
+self.max_k = 6
+self.min_k = 1
+remaining_tokens = 3
+```
+
+Then `choose_k()` returns `3`, because even though the adaptive controller wants to speculate 5 tokens, only 3 tokens remain.
+
+Another example:
+
+```python
+self.current_k = 8
+self.max_k = 6
+remaining_tokens = 20
+```
+
+It returns `6`, because `max_k` caps speculation length.
+
+So the purpose is: **use the adaptive K value, but keep it within valid bounds and never generate past `max_new_tokens`.**
 
 ---
 
