@@ -8,6 +8,7 @@ import hashlib
 from benchmarks.trigram_speculative_decoding_benchmark_runs import (
     run_trigram_speculative_decoding_benchmark_suite,
 )
+from benchmarks.test_correctness_equivalence import run_all_correctness_tests
 # hyperparameters
 # batch_size = 16 # how many independent sequences will we process in parallel?
 # block_size = 32 # what is the maximum context length for predictions?
@@ -1045,11 +1046,20 @@ def speculative_generate(target_model, draft_model, prompt_tokens, max_new_token
 
 context = torch.zeros((1,), dtype=torch.long).tolist()
 
-run_trigram_speculative_decoding_benchmark_suite(
-    m,
+# run_trigram_speculative_decoding_benchmark_suite(
+#     m,
+#     vocab_size=vocab_size,
+#     device=device,
+#     block_size=block_size,
+#     training_token_ids=train_data,
+#     prompt_source_tokens=val_data,
+# )
+
+run_all_correctness_tests(
+    m,                       # your trained model
     vocab_size=vocab_size,
     device=device,
     block_size=block_size,
-    training_token_ids=train_data,
-    prompt_source_tokens=val_data,
+    train_data=train_data,
+    val_data=val_data,
 )
