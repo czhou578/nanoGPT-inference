@@ -87,7 +87,7 @@ def test_recompute_vs_kv_cache(model, *, val_data, device, block_size,
     cached_logits = [logits[0, -1, :].clone()]   # logit that produced first_token
     generated = [first_token]
 
-    for _ in range(num_decode_steps - 1):
+    for _ in range(num_decode_steps - 1): # already generated first token
         cache_len = past_kvs[0][0][0].shape[1]
         inp = torch.tensor([[generated[-1]]], dtype=torch.long, device=device)
         pos = torch.tensor([[cache_len]], dtype=torch.long, device=device)
@@ -103,7 +103,7 @@ def test_recompute_vs_kv_cache(model, *, val_data, device, block_size,
 
     # Compare logits at each decode position
     # cached_logits[i] corresponds to full_logits[0, prompt_len - 1 + i, :]
-    all_close = True
+    all_close = True # flag
     for i in range(len(cached_logits)):
         recompute_logit = full_logits[0, prompt_len - 1 + i, :]
         if not torch.allclose(cached_logits[i], recompute_logit, atol=1e-5):
