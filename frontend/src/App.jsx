@@ -4,6 +4,7 @@ import LandingPage from './LandingPage';
 import ArticleView from './ArticleView';
 import Bibliography from './Bibliography';
 import Visualizer from './Visualizer';
+import SimulationPage from './SimulationPage';
 import './index.css';
 
 function App() {
@@ -17,6 +18,7 @@ function App() {
         <Route index element={<Bibliography />} />
       </Route>
       <Route path="/visualizer" element={<Visualizer />} />
+      <Route path="/simulations" element={<SimulationPage />} />
     </Routes>
   );
 }

@@ -1,0 +1,656 @@
+/* ── Simulation Shared Styles ────────────────────────────────────────────── */
+
+/* ── Visualization Cards ─────────────────────────────────────────────────── */
+
+.viz-card {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+}
+
+.viz-card h4 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #9ca3af;
+  margin-bottom: 0.85rem;
+}
+
+/* ── Token Chips ─────────────────────────────────────────────────────────── */
+
+.sim-token {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  white-space: nowrap;
+  transition: all 0.3s ease;
+  animation: tokenAppear 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.sim-token.prompt {
+  background: rgba(99, 102, 241, 0.2);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  color: #a5b4fc;
+}
+
+.sim-token.generated {
+  background: rgba(34, 197, 94, 0.2);
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  color: #86efac;
+}
+
+.sim-token.cached {
+  background: rgba(234, 179, 8, 0.15);
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  color: #fde047;
+}
+
+.sim-token.recomputed {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+}
+
+.sim-token.draft {
+  background: rgba(168, 85, 247, 0.2);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  color: #d8b4fe;
+}
+
+.sim-token.accepted {
+  background: rgba(34, 197, 94, 0.25);
+  border: 1px solid rgba(34, 197, 94, 0.5);
+  color: #86efac;
+}
+
+.sim-token.rejected {
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+  text-decoration: line-through;
+}
+
+.sim-token.resampled {
+  background: rgba(249, 115, 22, 0.2);
+  border: 1px solid rgba(249, 115, 22, 0.5);
+  color: #fdba74;
+}
+
+.sim-token.active-compute {
+  box-shadow: 0 0 12px rgba(99, 102, 241, 0.5);
+  animation: tokenPulse 0.8s ease-in-out infinite alternate;
+}
+
+/* ── Request Bars ────────────────────────────────────────────────────────── */
+
+.request-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  transition: all 0.3s ease;
+  animation: slideInLeft 0.3s ease both;
+}
+
+.request-bar .req-label {
+  font-weight: 600;
+  font-size: 0.7rem;
+  min-width: 2rem;
+}
+
+.request-bar .req-prompt {
+  color: #9ca3af;
+  font-size: 0.7rem;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.request-bar .req-progress {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.7rem;
+  color: #6b7280;
+}
+
+/* ── Block Memory Grid ───────────────────────────────────────────────────── */
+
+.sim-block-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(28px, 1fr));
+  gap: 3px;
+}
+
+.sim-block-cell {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 4px;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.sim-block-cell.free {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sim-block-cell.allocated {
+  border: 1px solid;
+  animation: blockAllocate 0.4s ease both;
+}
+
+.sim-block-cell .block-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.55rem;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+/* ── Status Badges ───────────────────────────────────────────────────────── */
+
+.sim-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 20px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.sim-badge.waiting {
+  background: rgba(234, 179, 8, 0.15);
+  color: #fde047;
+  border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.sim-badge.prefilling {
+  background: rgba(168, 85, 247, 0.15);
+  color: #d8b4fe;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.sim-badge.active {
+  background: rgba(34, 197, 94, 0.15);
+  color: #86efac;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.sim-badge.done {
+  background: rgba(107, 114, 128, 0.15);
+  color: #9ca3af;
+  border: 1px solid rgba(107, 114, 128, 0.3);
+}
+
+.sim-badge.preempted {
+  background: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.sim-badge.high {
+  background: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.sim-badge.med {
+  background: rgba(234, 179, 8, 0.15);
+  color: #fde047;
+  border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.sim-badge.low {
+  background: rgba(107, 114, 128, 0.15);
+  color: #9ca3af;
+  border: 1px solid rgba(107, 114, 128, 0.3);
+}
+
+/* ── Meters / Bars ───────────────────────────────────────────────────────── */
+
+.sim-meter {
+  width: 100%;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.sim-meter-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+.sim-meter-fill.indigo { background: linear-gradient(90deg, #6366f1, #818cf8); }
+.sim-meter-fill.green  { background: linear-gradient(90deg, #22c55e, #4ade80); }
+.sim-meter-fill.amber  { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+.sim-meter-fill.red    { background: linear-gradient(90deg, #ef4444, #f87171); }
+.sim-meter-fill.purple { background: linear-gradient(90deg, #a855f7, #c084fc); }
+
+/* ── Stats Row ───────────────────────────────────────────────────────────── */
+
+.sim-stats {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.sim-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.sim-stat-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.sim-stat-label {
+  font-size: 0.65rem;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ── Layout helpers ──────────────────────────────────────────────────────── */
+
+.sim-row {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.sim-row > * {
+  flex: 1;
+  min-width: 250px;
+}
+
+.sim-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.sim-token-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.sim-divider {
+  width: 100%;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  margin: 0.5rem 0;
+}
+
+/* ── Section label ───────────────────────────────────────────────────────── */
+
+.sim-section-label {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: #6b7280;
+  margin-bottom: 0.35rem;
+}
+
+/* ── Legend ───────────────────────────────────────────────────────────────── */
+
+.sim-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  font-size: 0.7rem;
+  color: #9ca3af;
+}
+
+.sim-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.sim-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+/* ── Comparison columns ──────────────────────────────────────────────────── */
+
+.sim-comparison {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.sim-comparison-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.sim-comparison-col h5 {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sim-comparison-col h5.no-cache { color: #fca5a5; }
+.sim-comparison-col h5.with-cache { color: #86efac; }
+
+/* ── Batch slots ─────────────────────────────────────────────────────────── */
+
+.batch-slot {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  min-height: 44px;
+  transition: all 0.3s ease;
+}
+
+.batch-slot.occupied {
+  border-style: solid;
+  animation: slotFill 0.3s ease both;
+}
+
+.batch-slot.empty {
+  opacity: 0.4;
+}
+
+.batch-slot .slot-index {
+  font-size: 0.6rem;
+  color: #4b5563;
+  font-weight: 600;
+  width: 1.2rem;
+}
+
+.batch-slot .slot-content {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.batch-slot .slot-token {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  transition: all 0.25s ease;
+}
+
+/* ── Timeline ────────────────────────────────────────────────────────────── */
+
+.sim-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.timeline-step {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  font-size: 0.7rem;
+  animation: fadeInRow 0.3s ease both;
+}
+
+.timeline-step .step-num {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-weight: 600;
+  color: #6b7280;
+  width: 3.5rem;
+}
+
+.timeline-step .step-action {
+  color: #d1d5db;
+}
+
+.timeline-step .step-detail {
+  color: #6b7280;
+  margin-left: auto;
+}
+
+/* ── Speculative rounds ──────────────────────────────────────────────────── */
+
+.spec-round {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  animation: fadeInUp 0.4s ease both;
+}
+
+.spec-round-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  color: #9ca3af;
+}
+
+.spec-tokens {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.spec-arrow {
+  color: #4b5563;
+  font-size: 0.8rem;
+}
+
+.spec-verdict {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+}
+
+/* ── Chunk bar (Chunked Prefill) ─────────────────────────────────────────── */
+
+.chunk-bar {
+  display: flex;
+  gap: 2px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.chunk-segment {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6rem;
+  font-weight: 600;
+  transition: all 0.3s ease;
+}
+
+.chunk-segment.processed {
+  opacity: 1;
+}
+
+.chunk-segment.pending {
+  opacity: 0.3;
+}
+
+.chunk-segment.current {
+  animation: chunkPulse 0.8s ease-in-out infinite alternate;
+}
+
+/* ── Budget bar ──────────────────────────────────────────────────────────── */
+
+.budget-bar {
+  display: flex;
+  gap: 1px;
+  height: 24px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.budget-slot {
+  flex: 1;
+  transition: all 0.3s ease;
+}
+
+.budget-slot.prefill {
+  background: rgba(168, 85, 247, 0.5);
+}
+
+.budget-slot.decode {
+  background: rgba(34, 197, 94, 0.5);
+}
+
+.budget-slot.empty {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* ── Arrow connectors ────────────────────────────────────────────────────── */
+
+.sim-arrow {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: #4b5563;
+  font-size: 0.7rem;
+}
+
+.sim-arrow-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.4), rgba(99, 102, 241, 0.1));
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+
+.sim-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  color: #4b5563;
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+/* ── Event log ───────────────────────────────────────────────────────────── */
+
+.event-log {
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.1) transparent;
+}
+
+.event-log-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+  padding: 0.2rem 0;
+  animation: fadeInRow 0.25s ease both;
+}
+
+.event-log-entry .log-step {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: #6b7280;
+  font-weight: 600;
+  min-width: 3rem;
+}
+
+.event-log-entry .log-event {
+  color: #d1d5db;
+}
+
+.event-log-entry .log-event .log-highlight {
+  font-weight: 600;
+}
+
+/* ── Animations ──────────────────────────────────────────────────────────── */
+
+@keyframes tokenAppear {
+  from { opacity: 0; transform: scale(0.7) translateY(4px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes tokenPulse {
+  from { box-shadow: 0 0 6px rgba(99, 102, 241, 0.3); }
+  to   { box-shadow: 0 0 18px rgba(99, 102, 241, 0.6); }
+}
+
+@keyframes blockAllocate {
+  from { opacity: 0; transform: scale(0.8); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slotFill {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes fadeInRow {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes chunkPulse {
+  from { opacity: 0.6; }
+  to   { opacity: 1; }
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .sim-comparison {
+    grid-template-columns: 1fr;
+  }
+
+  .sim-row > * {
+    min-width: 100%;
+  }
+}

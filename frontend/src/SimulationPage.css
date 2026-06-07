@@ -1,0 +1,253 @@
+/* ── SimulationPage Layout ───────────────────────────────────────────────── */
+
+.sim-page {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  min-height: 100vh;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+
+.sim-header {
+  text-align: center;
+  animation: fadeInDown 0.6s ease-out;
+}
+
+.sim-header h1 {
+  font-size: 2.25rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #a8c0ff 0%, #6366f1 50%, #a855f7 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 0.4rem;
+}
+
+.sim-header p {
+  color: #6b7280;
+  font-size: 0.95rem;
+}
+
+.sim-back-link {
+  position: absolute;
+  top: 1.5rem;
+  left: 1.5rem;
+  color: #6b7280;
+  text-decoration: none;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  transition: color 0.2s;
+}
+
+.sim-back-link:hover {
+  color: #a5b4fc;
+}
+
+/* ── Mode Selector ───────────────────────────────────────────────────────── */
+
+.mode-selector {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 0.35rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  animation: fadeInUp 0.6s ease-out;
+}
+
+.mode-btn {
+  padding: 0.55rem 1rem;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: #9ca3af;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.mode-btn:hover {
+  color: #e5e7eb;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.mode-btn.active {
+  color: #fff;
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.3);
+  box-shadow: 0 0 16px rgba(99, 102, 241, 0.15);
+}
+
+.mode-btn .mode-icon {
+  font-size: 1rem;
+}
+
+/* ── Description Banner ──────────────────────────────────────────────────── */
+
+.sim-description {
+  padding: 1rem 1.25rem;
+  border-radius: 12px;
+  background: rgba(99, 102, 241, 0.06);
+  border: 1px solid rgba(99, 102, 241, 0.12);
+  color: #d1d5db;
+  font-size: 0.82rem;
+  line-height: 1.65;
+  animation: fadeInUp 0.4s ease-out;
+}
+
+.sim-description strong {
+  color: #a5b4fc;
+}
+
+/* ── Transport Controls ──────────────────────────────────────────────────── */
+
+.transport-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  animation: fadeInUp 0.5s ease-out;
+}
+
+.transport-btn {
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #d1d5db;
+  font-size: 1.1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.transport-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.transport-btn.play {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(99, 102, 241, 0.2);
+  border-color: rgba(99, 102, 241, 0.4);
+  color: #a5b4fc;
+  font-size: 1.2rem;
+}
+
+.transport-btn.play:hover {
+  background: rgba(99, 102, 241, 0.3);
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.25);
+}
+
+.transport-btn.play.active {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+}
+
+.transport-btn.play.active:hover {
+  background: rgba(239, 68, 68, 0.3);
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.25);
+}
+
+.transport-step-label {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.8rem;
+  color: #6b7280;
+  min-width: 5rem;
+  text-align: center;
+}
+
+.speed-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: 0.75rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.speed-btn {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #6b7280;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.speed-btn:hover {
+  color: #d1d5db;
+}
+
+.speed-btn.active {
+  color: #a5b4fc;
+  background: rgba(99, 102, 241, 0.1);
+  border-color: rgba(99, 102, 241, 0.2);
+}
+
+/* ── Visualization Area ──────────────────────────────────────────────────── */
+
+.sim-viz-area {
+  animation: fadeInUp 0.5s ease-out;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .sim-page {
+    padding: 1rem;
+  }
+
+  .sim-header h1 {
+    font-size: 1.75rem;
+  }
+
+  .mode-btn {
+    padding: 0.45rem 0.7rem;
+    font-size: 0.7rem;
+  }
+
+  .mode-btn .mode-icon {
+    font-size: 0.85rem;
+  }
+
+  .transport-controls {
+    flex-wrap: wrap;
+  }
+}
+
+/* ── Keyframe reuse from App.css ─────────────────────────────────────────── */
+
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
