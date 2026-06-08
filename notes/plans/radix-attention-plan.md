@@ -6,16 +6,39 @@ Your current prefix caching in `nanogpt-prefix-caching.py` uses a **flat hash ma
 
 ### What's wrong with flat prefix caching?
 
-Consider this multi-turn chat workload:
+Imagine a user has a conversation with two follow-up branches (e.g., an agent exploring
+two reasoning paths). Using `block_size=4` and concrete token IDs:
 
 ```
-Turn 1:  [system_prompt] + [user_msg_1]           → generates response_1
-Turn 2:  [system_prompt] + [user_msg_1] + [response_1] + [user_msg_2]  → generates response_2
-Turn 3a: [system_prompt] + [user_msg_1] + [response_1] + [user_msg_3]  → generates response_3a (branch!)
-Turn 3b: [system_prompt] + [user_msg_1] + [response_1] + [user_msg_4]  → generates response_3b (branch!)
+Shared trunk (12 tokens):
+  Block 0: [10, 20, 30, 40]   ← system prompt
+  Block 1: [50, 60, 70, 80]   ← user message
+  Block 2: [90, 11, 12, 13]   ← model's first reply
+
+Branch A — user asks follow-up question A:
+  Block 3a: [14, 15, 16, 17]  ← "What about X?"
+
+Branch B — user asks follow-up question B:
+  Block 3b: [18, 19, 21, 22]  ← "What about Y?"
 ```
 
-With a flat cache, Turn 3a and Turn 3b **independently** look up blocks from position 0, walking the chain sequentially. There's no structural awareness that they share the same path through `[system_prompt] + [user_msg_1] + [response_1]`. Worse:
+Both branches share the **exact same** first 12 tokens (Blocks 0–2). Only Block 3
+differs. With a radix tree, the shared trunk is stored once and both branches fork
+from it. With a flat cache, here's what goes wrong:
+
+**Flat cache contents** (6 entries, keyed by chained hash):
+```
+hash(NONE, [10,20,30,40])                           → Block 0 KV    (shared)
+hash(Block0_hash, [50,60,70,80])                     → Block 1 KV    (shared)
+hash(Block1_hash, [90,11,12,13])                     → Block 2 KV    (shared)
+hash(Block2_hash, [14,15,16,17])                     → Block 3a KV   (branch A)
+hash(Block2_hash, [18,19,21,22])                     → Block 3b KV   (branch B)
+```
+
+The flat map has no idea that Blocks 0–2 are a shared trunk. When Branch A arrives,
+it walks the hash chain from Block 0 → 1 → 2 → 3a. When Branch B arrives moments
+later, it walks the **entire chain again** from Block 0 → 1 → 2 → 3b — re-hashing and
+re-looking-up 3 blocks it already verified. Worse:
 
 1. **No branching visibility.** You can't ask "what are all the suffixes that extend this prefix?" The flat map can't answer structural queries.
 2. **Eviction is blind.** LRU eviction picks the globally oldest block. But if Block 5 of a shared prefix is evicted, then Blocks 6, 7, 8 become unreachable — their chained hashes depend on Block 5 existing. The flat cache doesn't know about these dependencies, so it might evict a critical interior node while keeping useless orphaned leaf blocks.
