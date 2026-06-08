@@ -204,6 +204,129 @@ class RadixTree:
         
         for child in node.children.values():
             self.pretty_print(child, indent + 1)
+    
+    def _split_node(self, child: RadixNode, split_len: int) -> RadixNode:
+        """Split child's edge at position split_len. Returns the new mid-node."""
+        new_mid = RadixNode()
+        new_mid.token_ids = child.token_ids[:split_len]
+        new_mid.parent = child.parent
+        new_mid.last_access_time = child.last_access_time
+        new_mid.lock_ref = child.lock_ref
+
+        if child.kv_data is not None:
+            new_mid.kv_data = {}
+            new_child_kv = {}
+
+            for (layer, head), (k, v) in child.kv_data.items():
+                new_child_kv[(layer, head)] = (
+                    k[:, :split_len, :].clone(),
+                    v[:, :split_len, :].clone()
+                )
+                new_mid.kv_data[(layer, head)] = (
+                    k[:, split_len:, :].clone(),
+                    v[:, split_len:, :].clone()
+                )
+            
+            child.kv_data = new_child_kv
+
+        suffix_tokens = child.token_ids[split_len:]
+        child.token_ids = suffix_tokens
+        child.parent = new_mid
+
+        new_mid.children[suffix_tokens[0]] = child
+
+        new_mid.parent.children[new_mid.token_ids[0]] = new_mid
+        
+        return new_mid
+    
+    def insert(self, token_ids: List[int], kv_data_full: Dict, block_size: int):
+        """Insert token_ids and their KV data into the tree."""
+
+        node, matched = self.match_prefix(token_ids)
+
+        if matched == len(token_ids): return
+
+        remaining = token_ids[matched:]
+        new_node = RadixNode()
+        new_node.token_ids = tuple(remaining)
+        new_node.parent = node
+        new_node.last_access_time = self.current_step
+
+        new_node.kv_data = {}
+
+
+        for (layer, head), (k, v) in kv_data_full.items():
+            new_node.kv_data[(layer, head)] = (
+                k[:, matched:matched + len(remaining)].clone(),
+                v[:, matched:matched + len(remaining)].clone()
+            )
+        
+        node.children[remaining[0]] = new_node
+        
+    def evict_lru(self):
+        """Evict the least-recently-used unlocked leaf node."""
+        # Collect all evictable leaves
+        leaves = []
+        self._find_leaves(self.root, leaves)
+        
+        # Filter to unlocked leaves
+        candidates = [n for n in leaves if n.lock_ref == 0 and n != self.root]
+        if not candidates:
+            return False  # nothing to evict
+        
+        victim = min(candidates, key=lambda n: n.last_access_time)
+        
+        # Remove from parent
+        parent = victim.parent
+        del parent.children[victim.token_ids[0]]
+        
+        # Free KV data
+        victim.kv_data = None
+        victim.parent = None
+        
+        return True
+
+    def _find_leaves(self, node, result):
+        if not node.children:
+            result.append(node)
+        for child in node.children.values():
+            self._find_leaves(child, result)
+
+    def match_prefix(self, token_ids: List[int]) -> Tuple[RadixNode, int]:
+        """
+        Find the longest prefix of token_ids that exists in the tree.
+        Returns (last_matched_node, num_matched_tokens).
+        
+        IMPORTANT: If the match ends in the MIDDLE of an edge, you must
+        SPLIT the edge so there's a node at the exact match boundary.
+        """
+        node = self.root
+        matched = 0
+
+        while matched < len(token_ids):
+            next_token = token_ids[matched]
+            child = node.children.get(next_token)
+
+            if child is None: break
+
+            edge_tokens = child.token_ids
+            edge_match_len = 0
+
+            while (edge_match_len < len(edge_tokens) and 
+                matched + edge_match_len < len(token_ids) and 
+                edge_tokens[edge_match_len] == token_ids[matched + edge_match_len]):
+                edge_match_len += 1
+
+            if edge_match_len < len(edge_tokens):
+                child = self._split_node(child, edge_match_len)
+                matched += edge_match_len
+                node = child
+                break
+
+            matched += edge_match_len
+            node = child
+
+        return node, matched
 
 @dataclass
 class Request:
