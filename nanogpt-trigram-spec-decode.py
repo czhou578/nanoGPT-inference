@@ -9,6 +9,7 @@ from benchmarks.trigram_speculative_decoding_benchmark_runs import (
     run_trigram_speculative_decoding_benchmark_suite,
 )
 from benchmarks.test_correctness_equivalence import run_all_correctness_tests
+from benchmarks.simulation_benchmark_runs import run_simulation_benchmarks
 # hyperparameters
 # batch_size = 16 # how many independent sequences will we process in parallel?
 # block_size = 32 # what is the maximum context length for predictions?

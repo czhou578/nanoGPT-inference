@@ -1,6 +1,0 @@
-{
-    "python.defaultInterpreterPath": "${workspaceFolder}/.conda/python.exe",
-    "python.analysis.extraPaths": [
-        "${workspaceFolder}"
-    ]
-}
