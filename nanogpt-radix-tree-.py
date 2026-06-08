@@ -140,37 +140,41 @@ def find_cached_prefix(block_cache: BlockCache, prompt_tokens: List[int], block_
     
     return num_cached
 
+def load_from_radix_tree(request, tree, prompt_tokens, block_size):
+    """Load cached KV from the radix tree onto a request."""
+    node, matched = tree.match_prefix(prompt_tokens)
 
-def load_cached_blocks(request, block_cache, prompt_tokens, block_size):
-    """ 
-    Load cached KV blocks onto a request and return how many tokens were cached. 
-    Sets request.prefill_cursor to skip past the cached potion
-    """
+    if matched == 0: return 0
 
-    parent_hash = NONE_HASH
-    num_cached = 0
+    prefix_path = []
+    curr = node
 
-    for i in range(len(prompt_tokens) // block_size):
-        chunk = prompt_tokens[i * block_size : (i + 1) * block_size]
-        parent_hash = hash_block_tokens(parent_hash, chunk)
-
-        cached = block_cache.lookup(parent_hash)
-        if cached is None: break
-
-        for (layer, head), (k, v) in cached.kv_data.items():
-            if (layer, head) in request.kv_cache:
-                existing_k, existing_v = request.kv_cache[(layer, head)]
-
-                request.kv_cache[(layer, head)] = (
-                    torch.cat([existing_k, k.clone()], dim=1),
-                    torch.cat([existing_v, v.clone()], dim=1)
-                )
-            else:
-                request.kv_cache[(layer, head)] = (k.clone(), v.clone())
-        
-        num_cached += block_size
+    while curr != tree.root:
+        prefix_path.append(curr)
+        curr = curr.parent
     
+    prefix_path.reverse()
+
+    for (layer, head) in prefix_path[0].kv_data.keys():
+        new_k, new_v = [], []
+
+        for pnode in prefix_path:
+            pk, pv = pnode.kv_data[(layer, head)]
+            new_k.append(pk.clone())
+            new_v.append(pv.clone())
+            
+        request.kv_cache[(layer, head)] = (
+            torch.cat(new_k, dim=1),
+            torch.cat(new_v, dim=1),
+        )
+
+    for pnode in prefix_path:
+        pnode.lock_ref += 1        
+    
+    # Snap to block boundary for prefill_cursor
+    num_cached = (matched // block_size) * block_size
     request.prefill_cursor = num_cached
+    request._radix_path = prefix_path  # save for later unlock
     return num_cached
 
 class RadixNode:

@@ -287,6 +287,7 @@ def load_from_radix_tree(request, tree, prompt_tokens, block_size):
             pk, pv = pnode.kv_data[(layer, head)]
             k_parts.append(pk.clone())
             v_parts.append(pv.clone())
+            
         request.kv_cache[(layer, head)] = (
             torch.cat(k_parts, dim=1),
             torch.cat(v_parts, dim=1),
