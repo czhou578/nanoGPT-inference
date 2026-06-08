@@ -296,6 +296,15 @@ class RadixTree:
         for child in node.children.values():
             self._find_leaves(child, result)
 
+    def unlock_radix_path(request):
+        """Release the tree locks acquired during load_from_radix_tree."""
+        path = getattr(request, '_radix_path', None)
+        if path is None:
+            return
+        for node in path:
+            node.lock_ref -= 1
+        request._radix_path = None
+
     def match_prefix(self, token_ids: List[int]) -> Tuple[RadixNode, int]:
         """
         Find the longest prefix of token_ids that exists in the tree.
@@ -377,7 +386,7 @@ class Scheduler:
         self.token_budget = token_budget
         self.max_kv_tokens = max_kv_tokens
         self.block_size = block_size
-        self.block_cache = BlockCache()
+        self.radix_tree = RadixTree()
 
         self.waiting = []
         self.prefilling = []
@@ -415,8 +424,8 @@ class Scheduler:
 
         _, _, _, candidate = self.waiting[0]
 
-        num_cached = find_cached_prefix(self.block_cache, candidate.prompt_tokens, self.block_size)
-        
+        _, num_cached = self.radix_tree.match_prefix(candidate.prompt_tokens)        
+        num_cached = (num_cached // self.block_size) * self.block_size
         actual_kv_cost = len(candidate.prompt_tokens) - num_cached
 
         if kv_used + actual_kv_cost > self.max_kv_tokens:
@@ -425,7 +434,7 @@ class Scheduler:
         if len(self.active) + len(self.prefilling) >= self.max_batch_size: return
 
         heapq.heappop(self.waiting)
-        load_cached_blocks(candidate, self.block_cache, candidate.prompt_tokens, self.block_size)
+        self.radix_tree.load_from_radix_tree(candidate, candidate.prompt_tokens, self.block_size)
         candidate.arrival_time = step
         candidate.status = "prefilling"
         self.prefilling.append(candidate)
@@ -866,8 +875,7 @@ def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_t
                     if prefill_req.is_fully_prefilled:
                         prefill_req.generated_tokens.append(idx_next.item())
                         prefill_req._last_token = idx_next
-                        commit_completed_blocks(prefill_req, scheduler.block_cache, scheduler.block_size)
-
+                        
                         scheduler.promote(prefill_req)
     
             if decode_reqs:
@@ -902,10 +910,3 @@ def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_t
             step += 1
     
     return scheduler
-
-run_prefix_caching_benchmark_suite(
-    m,
-    vocab_size=vocab_size,
-    device=device,
-    block_size=block_size,
-)
