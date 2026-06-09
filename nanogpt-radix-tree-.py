@@ -603,26 +603,27 @@ class GPTLanguageModel(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)
         return idx
 
-model = GPTLanguageModel()
-m = model.to(device)
-print(sum(p.numel() for p in m.parameters())/1e6, 'M parameters')
+if __name__ == "__main__":
+    model = GPTLanguageModel()
+    m = model.to(device)
+    print(sum(p.numel() for p in m.parameters())/1e6, 'M parameters')
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
-for iter in range(max_iters):
-    if iter % eval_interval == 0 or iter == max_iters - 1:
-        losses = estimate_loss()
-        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+    for iter in range(max_iters):
+        if iter % eval_interval == 0 or iter == max_iters - 1:
+            losses = estimate_loss()
+            print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
 
-    xb, yb = get_batch('train')
-    logits, loss, _ = model(xb, yb)  # _ discards the cache during training
-    optimizer.zero_grad(set_to_none=True)
-    loss.backward()
-    optimizer.step()
+        xb, yb = get_batch('train')
+        logits, loss, _ = model(xb, yb)  # _ discards the cache during training
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
 
-# Quick sanity check with the original no-cache generate
-context = torch.zeros((1, 1), dtype=torch.long, device=device)
-print(decode(m.generate(context, max_new_tokens=200)[0].tolist()))
+    # Quick sanity check with the original no-cache generate
+    context = torch.zeros((1, 1), dtype=torch.long, device=device)
+    print(decode(m.generate(context, max_new_tokens=200)[0].tolist()))
 
 def assemble_batch_cache(requests):
     """
@@ -795,15 +796,16 @@ def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_t
     
     return scheduler
 
-# ── Run benchmarks ────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    # ── Run benchmarks ────────────────────────────────────────────────────────────
 
-from benchmarks.radix_tree_benchmark_runs import (
-    run_radix_tree_benchmark_suite,
-)
+    from benchmarks.radix_tree_benchmark_runs import (
+        run_radix_tree_benchmark_suite,
+    )
 
-run_radix_tree_benchmark_suite(
-    m,
-    vocab_size=vocab_size,
-    device=device,
-    block_size=block_size,
-)
+    run_radix_tree_benchmark_suite(
+        m,
+        vocab_size=vocab_size,
+        device=device,
+        block_size=block_size,
+    )
