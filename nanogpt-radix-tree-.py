@@ -2,9 +2,8 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import heapq
-import hashlib
-from dataclasses import dataclass, field, Optional
-from typing import List, Dict, Tuple
+from dataclasses import dataclass, field
+from typing import List, Dict, Tuple, Optional
 
 # # hyperparameters
 # batch_size = 64 # how many independent sequences will we process in parallel?
@@ -78,67 +77,7 @@ def estimate_loss():
     model.train()
     return out
 
-NONE_HASH = b'\x00' * 16  # sentinel for the first block (no parent)
 
-def hash_block_tokens(parent_hash, token_ids):
-    """Compute a chained content hash for a KV block."""
-    data = (parent_hash, tuple(token_ids))
-    return hashlib.md5(str(data).encode()).digest()
-
-@dataclass
-class CachedBlock:
-    """A cached KV block with its content hash."""
-
-    block_hash: bytes
-    token_ids: tuple
-    kv_data: Dict[Tuple[int, int], Tuple[torch.Tensor, torch.Tensor]]
-    last_access_step: int = 0
-
-
-class BlockCache:
-    def __init__(self, max_blocks=64):
-        self.max_blocks = max_blocks
-        self.cache: Dict[bytes, CachedBlock] = {}
-        self.current_step = 0
-        
-
-    def lookup(self, block_hash):
-        block = self.cache.get(block_hash)
-        if block is not None:
-            block.last_access_step = self.current_step
-        return block
-    
-    def insert(self, block_hash, token_ids, kv_data):
-        if len(self.cache) >= self.max_blocks:
-            self.evict_lru()
-
-        self.cache[block_hash] = CachedBlock(
-            block_hash=block_hash,
-            token_ids=token_ids,
-            kv_data=kv_data,
-            last_access_step=self.current_step
-        )
-    
-    def evict_lru(self):
-        oldest = min(self.cache.values(), key=lambda b: b.last_access_step)
-        del self.cache[oldest.block_hash]
-
-def find_cached_prefix(block_cache: BlockCache, prompt_tokens: List[int], block_size: int):
-    """
-    Walk the prompt left-to-right in block-sized chunks.
-    Return the number of tokens that are fully cached
-    """
-    num_cached = 0
-    parent_hash = NONE_HASH
-
-    for i in range(len(prompt_tokens) // block_size):
-        chunk = prompt_tokens[i * block_size : (i + 1) * block_size]
-        parent_hash = hash_block_tokens(parent_hash, chunk)
-
-        if block_cache.lookup(parent_hash) is None: break
-        num_cached += block_size
-    
-    return num_cached
 
 def load_from_radix_tree(request, tree, prompt_tokens, block_size):
     """Load cached KV from the radix tree onto a request."""
@@ -222,11 +161,11 @@ class RadixTree:
             new_child_kv = {}
 
             for (layer, head), (k, v) in child.kv_data.items():
-                new_child_kv[(layer, head)] = (
+                new_mid.kv_data[(layer, head)] = (
                     k[:, :split_len, :].clone(),
                     v[:, :split_len, :].clone()
                 )
-                new_mid.kv_data[(layer, head)] = (
+                new_child_kv[(layer, head)] = (
                     k[:, split_len:, :].clone(),
                     v[:, split_len:, :].clone()
                 )
@@ -254,7 +193,7 @@ class RadixTree:
         new_node = RadixNode()
         new_node.token_ids = tuple(remaining)
         new_node.parent = node
-        new_node.last_access_time = self.current_step
+        new_node.last_access_time = self.step
 
         new_node.kv_data = {}
 
@@ -296,7 +235,7 @@ class RadixTree:
         for child in node.children.values():
             self._find_leaves(child, result)
 
-    def unlock_radix_path(request):
+    def unlock_radix_path(self, request):
         """Release the tree locks acquired during load_from_radix_tree."""
         path = getattr(request, '_radix_path', None)
         if path is None:
@@ -350,7 +289,7 @@ class Request:
     generated_tokens: List[int] = field(default_factory=list)
     status: str = "waiting"           # "waiting" -> "prefilling" -> "active" -> "done"
     prefill_cursor: int = 0
-    _committed_blocks: int = 0
+    _radix_path: list = field(default_factory=list)
 
     # Hint 2: Per-request KV cache, keyed by (layer_idx, head_idx)
     # Each value is a (key_tensor, value_tensor) tuple of shape (1, T_i, head_size)
@@ -434,7 +373,7 @@ class Scheduler:
         if len(self.active) + len(self.prefilling) >= self.max_batch_size: return
 
         heapq.heappop(self.waiting)
-        self.radix_tree.load_from_radix_tree(candidate, candidate.prompt_tokens, self.block_size)
+        load_from_radix_tree(candidate, self.radix_tree, candidate.prompt_tokens, self.block_size)
         candidate.arrival_time = step
         candidate.status = "prefilling"
         self.prefilling.append(candidate)
@@ -461,7 +400,7 @@ class Scheduler:
             decode_reqs:  List[Request]   — all requests currently being decoded (active)
 
         """
-        self.block_cache.current_step = step
+        self.radix_tree.step = step
 
         self._maybe_admit(step)       # promote waiting → prefilling if memory allows
         self._maybe_preempt()         # evict if over memory budget
@@ -778,37 +717,9 @@ def disassemble_batch_cache(requests, new_kvs, pad_lengths):
                     batched_v[i : i + 1, pad:, :],
                 )
 
-def commit_completed_blocks(request: Request, block_cache: BlockCache, block_size: int):
-    """
-    After a prefill step, check if any new full blocks were completed.
-    If so, insert them into the global cache.
-    """
-
-    num_full_blocks = request.prefill_cursor // block_size
-
-    parent_hash = NONE_HASH
-
-    for block_idx in range(num_full_blocks):
-        start = block_idx * block_size
-        end = start + block_size
-
-        chunk = request.prompt_tokens[start:end]
-        block_hash = hash_block_tokens(parent_hash, chunk)
-
-        if block_idx >= request._committed_blocks:
-            kv_data = {}
-
-            for (layer, head), (k, v) in request.kv_cache.items():
-                kv_data[(layer, head)] = (
-                    k[:, start:end, :].clone(),
-                    v[:, start:end, :].clone()
-                )
-            
-            block_cache.insert(block_hash, tuple(chunk), kv_data)
-        
-        parent_hash = block_hash
-    
-    request._committed_blocks = num_full_blocks
+def insert_into_radix_tree(request, tree, block_size):
+    """Insert a request's prompt tokens and KV data into the radix tree."""
+    tree.insert(request.prompt_tokens, request.kv_cache, block_size)
 
 def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_tokens=256):
     scheduler = Scheduler(policy, token_budget=token_budget, max_kv_tokens=max_kv_tokens)
@@ -873,9 +784,10 @@ def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_t
                     idx_next = torch.multinomial(probs, num_samples=1)
 
                     if prefill_req.is_fully_prefilled:
+                        insert_into_radix_tree(prefill_req, scheduler.radix_tree, scheduler.block_size)
                         prefill_req.generated_tokens.append(idx_next.item())
                         prefill_req._last_token = idx_next
-                        
+                        scheduler.radix_tree.unlock_radix_path(prefill_req)
                         scheduler.promote(prefill_req)
     
             if decode_reqs:
@@ -905,6 +817,7 @@ def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_t
                 
                 for req in list(scheduler.active):
                     if req.is_done:
+                        scheduler.radix_tree.unlock_radix_path(req)
                         scheduler.complete(req)
         
             step += 1
