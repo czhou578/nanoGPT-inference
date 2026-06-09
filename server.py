@@ -10,13 +10,19 @@ Single request:
       -d '{"prompt": "First Citizen:", "max_tokens": 50}'
 
 Two concurrent requests (separate terminals):
-    curl -N localhost:8000/v1/completions -d '{"prompt": "ROMEO:", "max_tokens": 30}'
-    curl -N localhost:8000/v1/completions -d '{"prompt": "JULIET:", "max_tokens": 30}'
+    curl -N http://localhost:8000/v1/completions \
+      -H "Content-Type: application/json" \
+      -d '{"prompt": "ROMEO:", "max_tokens": 30}'
+    curl -N http://localhost:8000/v1/completions \
+      -H "Content-Type: application/json" \
+      -d '{"prompt": "JULIET:", "max_tokens": 30}'
 
 Shared prefix (radix cache hit on second request):
-    curl -N localhost:8000/v1/completions \
+    curl -N http://localhost:8000/v1/completions \
+      -H "Content-Type: application/json" \
       -d '{"prompt": "First Citizen: We are accounted poor", "max_tokens": 20}'
-    curl -N localhost:8000/v1/completions \
+    curl -N http://localhost:8000/v1/completions \
+      -H "Content-Type: application/json" \
       -d '{"prompt": "First Citizen: We are accounted poor", "max_tokens": 20}'
 
 Check engine state:
