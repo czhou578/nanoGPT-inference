@@ -129,7 +129,6 @@ class RadixNode:
 class RadixTree:
     def __init__(self):
         self.root = RadixNode()
-        self.nodes: Dict[int, RadixNode] = {}
         self.step = 0
     
     def pretty_print(self, node=None, indent=0):
@@ -206,34 +205,6 @@ class RadixTree:
         
         node.children[remaining[0]] = new_node
         
-    def evict_lru(self):
-        """Evict the least-recently-used unlocked leaf node."""
-        # Collect all evictable leaves
-        leaves = []
-        self._find_leaves(self.root, leaves)
-        
-        # Filter to unlocked leaves
-        candidates = [n for n in leaves if n.lock_ref == 0 and n != self.root]
-        if not candidates:
-            return False  # nothing to evict
-        
-        victim = min(candidates, key=lambda n: n.last_access_time)
-        
-        # Remove from parent
-        parent = victim.parent
-        del parent.children[victim.token_ids[0]]
-        
-        # Free KV data
-        victim.kv_data = None
-        victim.parent = None
-        
-        return True
-
-    def _find_leaves(self, node, result):
-        if not node.children:
-            result.append(node)
-        for child in node.children.values():
-            self._find_leaves(child, result)
 
     def unlock_radix_path(self, request):
         """Release the tree locks acquired during load_from_radix_tree."""
