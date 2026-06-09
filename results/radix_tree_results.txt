@@ -1,0 +1,107 @@
+0.056769 M parameters
+step 0: train loss 4.1800, val loss 4.1791
+step 20: train loss 3.6074, val loss 3.6479
+step 40: train loss 3.3261, val loss 3.3321
+step 60: train loss 3.1051, val loss 3.1305
+step 80: train loss 2.9561, val loss 2.9651
+step 100: train loss 2.8319, val loss 2.8681
+step 119: train loss 2.7760, val loss 2.7998
+
+XJad, f zotg pyreds hosn avtfZISp.Tit iuominerl O? umr,n nu, d be e ths meth m ppan ;
+Siinowame nf,of,om sHodngthetouc $ smad
+Xadr :! .
+xeaweN
+IB bes,inlon'orakintcth, rOQWhrQd Toke ,s he lnFe j usene
+
+=== Radix Tree Benchmark Suite ===
+block_size=64, device=cpu
+
+
+=== shared_prefix_basic ===
+{'workload_name': 'shared_prefix', 'num_requests': 8, 'shared_prefix_len': 16, 'unique_suffix_len': 8, 'max_new_tokens': 6, 'num_groups': 1, 'block_size': 4, 'max_cache_blocks': 64}
+method     | reqs | prompt_tok | prefill_tok | cached_tok | gen_tok | wall_s | gen_tok/s | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | hit_rate | entries | evict | tree_nodes
+-----------+------+------------+-------------+------------+---------+--------+-----------+-------------+-------------+------------+----------+---------+-------+-----------
+no_cache   | 8    | 192        | 192         | 0          | 48      | 0.1296 | 370.48    | 3.58        | 4.41        | 16.19      | 0.0%     | 0       | 0     | 0         
+flat_cache | 8    | 192        | 80          | 112        | 48      | 0.1375 | 349.21    | 4.30        | 6.20        | 17.18      | 77.8%    | 20      | 0     | 0         
+radix_tree | 8    | 192        | 80          | 112        | 48      | 0.1272 | 377.49    | 3.71        | 4.04        | 15.89      | 87.5%    | 9       | 0     | 10        
+
+flat_cache throughput vs no_cache: 0.94x
+flat_cache prefill token reduction: 58.3%
+
+radix_tree throughput vs no_cache: 1.02x
+radix_tree prefill token reduction: 58.3%
+
+
+=== high_reuse_many_requests ===
+{'workload_name': 'shared_prefix', 'num_requests': 24, 'shared_prefix_len': 24, 'unique_suffix_len': 4, 'max_new_tokens': 4, 'num_groups': 1, 'block_size': 4, 'max_cache_blocks': 64}
+method     | reqs | prompt_tok | prefill_tok | cached_tok | gen_tok | wall_s | gen_tok/s | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | hit_rate | entries | evict | tree_nodes
+-----------+------+------------+-------------+------------+---------+--------+-----------+-------------+-------------+------------+----------+---------+-------+-----------
+no_cache   | 24   | 672        | 672         | 0          | 96      | 0.2369 | 405.22    | 3.12        | 3.70        | 9.87       | 0.0%     | 0       | 0     | 0         
+flat_cache | 24   | 672        | 120         | 552        | 96      | 0.3078 | 311.91    | 3.94        | 4.81        | 12.82      | 85.2%    | 30      | 0     | 0         
+radix_tree | 24   | 672        | 120         | 552        | 96      | 0.2897 | 331.38    | 4.00        | 4.91        | 12.07      | 95.8%    | 28      | 0     | 29        
+
+flat_cache throughput vs no_cache: 0.77x
+flat_cache prefill token reduction: 82.1%
+
+radix_tree throughput vs no_cache: 0.82x
+radix_tree prefill token reduction: 82.1%
+
+
+=== branching_conversation ===
+{'workload_name': 'branching', 'trunk_len': 24, 'branch_suffix_len': 8, 'num_branches': 8, 'max_new_tokens': 4, 'block_size': 4, 'max_cache_blocks': 64}
+method     | reqs | prompt_tok | prefill_tok | cached_tok | gen_tok | wall_s | gen_tok/s | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | hit_rate | entries | evict | tree_nodes
+-----------+------+------------+-------------+------------+---------+--------+-----------+-------------+-------------+------------+----------+---------+-------+-----------
+no_cache   | 8    | 256        | 256         | 0          | 32      | 0.0925 | 346.07    | 3.67        | 4.89        | 11.56      | 0.0%     | 0       | 0     | 0         
+flat_cache | 8    | 256        | 88          | 168        | 32      | 0.1059 | 302.12    | 4.08        | 4.97        | 13.24      | 84.0%    | 22      | 0     | 0         
+radix_tree | 8    | 256        | 88          | 168        | 32      | 0.0844 | 378.95    | 3.70        | 4.36        | 10.55      | 87.5%    | 10      | 0     | 11        
+
+flat_cache throughput vs no_cache: 0.87x
+flat_cache prefill token reduction: 65.6%
+
+radix_tree throughput vs no_cache: 1.10x
+radix_tree prefill token reduction: 65.6%
+
+
+=== multi_prefix_groups ===
+{'workload_name': 'shared_prefix', 'num_requests': 24, 'shared_prefix_len': 16, 'unique_suffix_len': 8, 'max_new_tokens': 4, 'num_groups': 4, 'block_size': 4, 'max_cache_blocks': 64}
+method     | reqs | prompt_tok | prefill_tok | cached_tok | gen_tok | wall_s | gen_tok/s | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | hit_rate | entries | evict | tree_nodes
+-----------+------+------------+-------------+------------+---------+--------+-----------+-------------+-------------+------------+----------+---------+-------+-----------
+no_cache   | 24   | 576        | 576         | 0          | 96      | 0.2342 | 409.97    | 3.21        | 3.83        | 9.76       | 0.0%     | 0       | 0     | 0         
+flat_cache | 24   | 576        | 256         | 320        | 96      | 0.3326 | 288.66    | 4.41        | 6.21        | 13.86      | 76.9%    | 64      | 0     | 0         
+radix_tree | 24   | 576        | 256         | 320        | 96      | 0.2585 | 371.43    | 3.58        | 4.72        | 10.77      | 83.3%    | 30      | 0     | 31        
+
+flat_cache throughput vs no_cache: 0.70x
+flat_cache prefill token reduction: 55.6%
+
+radix_tree throughput vs no_cache: 0.91x
+radix_tree prefill token reduction: 55.6%
+
+
+=== low_reuse_control ===
+{'workload_name': 'low_reuse', 'num_requests': 8, 'prompt_len': 24, 'max_new_tokens': 6, 'block_size': 4, 'max_cache_blocks': 64}
+method     | reqs | prompt_tok | prefill_tok | cached_tok | gen_tok | wall_s | gen_tok/s | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | hit_rate | entries | evict | tree_nodes
+-----------+------+------------+-------------+------------+---------+--------+-----------+-------------+-------------+------------+----------+---------+-------+-----------
+no_cache   | 8    | 192        | 192         | 0          | 48      | 0.1184 | 405.30    | 3.46        | 4.26        | 14.80      | 0.0%     | 0       | 0     | 0         
+flat_cache | 8    | 192        | 192         | 0          | 48      | 0.1356 | 353.93    | 3.09        | 3.60        | 16.95      | 0.0%     | 48      | 0     | 0         
+radix_tree | 8    | 192        | 192         | 0          | 48      | 0.1199 | 400.44    | 3.11        | 3.38        | 14.98      | 0.0%     | 8       | 0     | 9         
+
+flat_cache throughput vs no_cache: 0.87x
+flat_cache prefill token reduction: 0.0%
+
+radix_tree throughput vs no_cache: 0.99x
+radix_tree prefill token reduction: 0.0%
+
+
+=== eviction_pressure ===
+{'workload_name': 'shared_prefix', 'num_requests': 24, 'shared_prefix_len': 16, 'unique_suffix_len': 8, 'max_new_tokens': 4, 'num_groups': 6, 'block_size': 4, 'max_cache_blocks': 8}
+method     | reqs | prompt_tok | prefill_tok | cached_tok | gen_tok | wall_s | gen_tok/s | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | hit_rate | entries | evict | tree_nodes
+-----------+------+------------+-------------+------------+---------+--------+-----------+-------------+-------------+------------+----------+---------+-------+-----------
+no_cache   | 24   | 576        | 576         | 0          | 96      | 0.2341 | 410.08    | 3.10        | 4.18        | 9.75       | 0.0%     | 0       | 0     | 0         
+flat_cache | 24   | 576        | 576         | 0          | 96      | 0.3067 | 313.03    | 3.23        | 3.96        | 12.78      | 0.0%     | 8       | 136   | 0         
+radix_tree | 24   | 576        | 288         | 288        | 96      | 0.2564 | 374.37    | 3.58        | 4.01        | 10.68      | 79.2%    | 31      | 0     | 32        
+
+flat_cache throughput vs no_cache: 0.76x
+flat_cache prefill token reduction: 0.0%
+
+radix_tree throughput vs no_cache: 0.91x
+radix_tree prefill token reduction: 50.0%

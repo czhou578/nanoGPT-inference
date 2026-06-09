@@ -26,7 +26,7 @@ block_size = 64        # keep same for now so your benchmark assumptions hold
 max_iters = 120         # much faster than 5000
 eval_interval = 20
 learning_rate = 1e-3
-device = 'cuda'          # force GPU
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters = 10         # much faster validation
 n_embd = 32             # was 64
 n_head = 4              # 32 / 4 = 8 dim per head
@@ -823,3 +823,16 @@ def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_t
             step += 1
     
     return scheduler
+
+# ── Run benchmarks ────────────────────────────────────────────────────────────
+
+from benchmarks.radix_tree_benchmark_runs import (
+    run_radix_tree_benchmark_suite,
+)
+
+run_radix_tree_benchmark_suite(
+    m,
+    vocab_size=vocab_size,
+    device=device,
+    block_size=block_size,
+)
