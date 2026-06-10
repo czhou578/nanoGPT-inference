@@ -1,3 +1,21 @@
+"""
+NanoGPT + Prefill-Decode Interleaving — Fused Batch Assembly.
+
+Packs decode requests (1 token each) and one prefill chunk (N tokens)
+into a single (B, T_max) batch tensor with left-padding, processed in
+one forward pass. Maximizes GPU utilization by eliminating idle time
+between prefill and decode phases.
+
+Builds on: nanogpt-paged-attention.py
+Key additions:
+    - assemble_fused_batch() — packs heterogeneous requests into one batch
+    - disassemble_fused_cache() — scatters output KV back per-request
+    - Per-row position embeddings and attention masks
+    - Prefix caching integration (load before fused pass, commit after)
+
+Run:
+    python nanogpt-interleaving.py
+"""
 import torch
 import torch.nn as nn
 from torch.nn import functional as F

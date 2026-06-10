@@ -1,5 +1,5 @@
 """
-Radix-tree prefix-caching benchmark for nanogpt-radix-tree-.py.
+Radix-tree prefix-caching benchmark for nanogpt-radix-tree.py.
 
 Standalone benchmark — importing it does NOT train the model.
 It assumes the model API from the nanogpt files:

@@ -1,3 +1,22 @@
+"""
+NanoGPT + INT8 Quantization — Dynamic and Static Weight Quantization.
+
+Demonstrates two quantization approaches to reduce memory footprint:
+1. Dynamic quantization — torch.quantization.quantize_dynamic() converts
+   Linear weights to INT8 at runtime with per-tensor scaling.
+2. Static quantization — full pipeline with module fusion (Linear+ReLU),
+   QuantStub/DeQuantStub wrapping, calibration on validation data, and
+   conversion to fully quantized INT8.
+
+Builds on: nanogpt.py
+Key additions:
+    - Dynamic quantization via quantize_dynamic()
+    - Static quantization with fuse_modules(), calibration, and conversion
+    - QuantStub/DeQuantStub on all Linear layers (K/Q/V, FFN, LM head)
+
+Run:
+    python nanogpt-quantize.py
+"""
 import torch
 import torch.quantization
 import torch.nn as nn

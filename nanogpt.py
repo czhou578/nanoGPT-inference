@@ -1,3 +1,18 @@
+"""
+NanoGPT Baseline — Andrej Karpathy's character-level GPT.
+
+This is the unmodified starting point for the inference engine progression.
+Trains a small transformer on Tiny Shakespeare and generates text via
+full-recompute autoregressive decoding (no KV cache, no batching).
+
+Key functions:
+    - GPTLanguageModel.generate()  — vanilla autoregressive generation
+    - get_batch()                  — training data loader
+    - estimate_loss()              — validation loss estimation
+
+Run:
+    python nanogpt.py
+"""
 import torch
 import torch.nn as nn
 from torch.nn import functional as F

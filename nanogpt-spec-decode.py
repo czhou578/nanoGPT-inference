@@ -1,3 +1,24 @@
+"""
+NanoGPT + Speculative Decoding — Bigram Draft Model.
+
+Uses a zero-parameter bigram statistical model to draft K candidate tokens,
+then verifies all K+1 tokens in a single batched forward pass through the
+target model. Implements the standard rejection sampling algorithm:
+accept with probability min(1, p_target/q_draft), resample from the
+residual distribution on rejection.
+
+Builds on: nanogpt-paged-attention.py
+Key additions:
+    - BigramDraftModel — P(next|current) from training data bigram counts
+    - draft_tokens() — autoregressive sampling from the draft model
+    - verify_candidates() — batched target model verification
+    - accept_reject() — rejection sampling with residual resampling
+    - trim_kv_cache() — rollback on rejection
+    - Full PagedAttention + scheduling + prefix caching integration
+
+Run:
+    python nanogpt-spec-decode.py
+"""
 from numpy import dtype
 import torch
 import torch.nn as nn
