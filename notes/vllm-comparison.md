@@ -59,9 +59,9 @@ The goal is to show how the same concepts map between a production system (vLLM 
 ```python
 @dataclass(slots=True)
 class KVCacheBlock:
-    block_id: int
-    ref_cnt: int = 0
-    _block_hash: BlockHashWithGroupId | None = None
+    block_id: int # the actual KV tensors live in pre-allocated GPU memory indexed by this block ID
+    ref_cnt: int = 0 # not implemented in NanoGPT
+    _block_hash: BlockHashWithGroupId | None = None # not implemented in NanoGPT
 
     # Doubly-linked list pointers for O(1) free queue operations
     prev_free_block: "KVCacheBlock | None" = None
