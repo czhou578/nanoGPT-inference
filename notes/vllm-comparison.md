@@ -376,6 +376,303 @@ def write_kv_to_pool(pool, block_table, block_size, start_pos, k_new, v_new, lay
 
 ---
 
+### 9. Scheduler
+
+**vLLM: `Scheduler`** ([scheduler.py:L67-L954](../../vllm/vllm/v1/core/sched/scheduler.py))
+
+The scheduler is the top-level loop that decides which requests get GPU time at each step. vLLM's scheduler is ~2,300 lines and handles dozens of production concerns (LoRA, multimodal, speculative decoding, P/D disaggregation, structured output, async scheduling). NanoGPT's scheduler is ~90 lines and captures the essential scheduling algorithm.
+
+#### 9a. Request State Machine
+
+**vLLM: `RequestStatus`** ([request.py:L299-L341](../../vllm/vllm/v1/request.py))
+
+```python
+class RequestStatus(enum.IntEnum):
+    WAITING = auto()
+    WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR = auto()
+    WAITING_FOR_REMOTE_KVS = auto()
+    WAITING_FOR_STREAMING_REQ = auto()
+    RUNNING = auto()
+    PREEMPTED = auto()
+    FINISHED_STOPPED = auto()
+    FINISHED_LENGTH_CAPPED = auto()
+    FINISHED_ABORTED = auto()
+    FINISHED_IGNORED = auto()
+    FINISHED_ERROR = auto()
+    FINISHED_REPETITION = auto()
+```
+
+**NanoGPT: `Request.status`** ([nanogpt-paged-attention.py:L233](../../nanogpt-paged-attention.py))
+
+```python
+status: str = "waiting"  # "waiting" -> "prefilling" -> "active" -> "done"
+```
+
+| Feature | vLLM | NanoGPT |
+|---------|------|---------| 
+| Status type | `IntEnum` with 12 states | String with 4 states |
+| Waiting sub-states | 4 variants (grammar init, remote KV, streaming, normal) | 1 (`"waiting"`) |
+| Finished sub-states | 6 variants (stopped, length-capped, aborted, ignored, error, repetition) | 1 (`"done"`) |
+| Prefill vs decode distinction | No explicit phase — uses `num_computed_tokens < num_tokens` | Explicit `"prefilling"` vs `"active"` states |
+| Preemption tracking | Dedicated `PREEMPTED` status + `num_preemptions` counter | Resets to `"waiting"` directly |
+
+**Key Insight:** vLLM eliminates the concept of "prefilling" and "decoding" as separate phases. Instead, every request simply has a `num_computed_tokens` counter, and the scheduler assigns however many new tokens it can. This unified model naturally handles chunked prefill (where a "prefilling" request gets partial tokens across multiple steps), resumed requests after preemption, and speculative decoding (where extra tokens need computing). NanoGPT uses explicit `"prefilling"` → `"active"` transitions, which is easier to reason about but doesn't generalize as cleanly.
+
+---
+
+#### 9b. Scheduling Loop Structure
+
+**vLLM: `Scheduler.schedule()`** ([scheduler.py:L348-L954](../../vllm/vllm/v1/core/sched/scheduler.py))
+
+```python
+def schedule(self) -> SchedulerOutput:
+    # Phase 1: Schedule RUNNING requests first
+    while req_index < len(self.running) and token_budget > 0:
+        num_new_tokens = request.num_tokens_with_spec - request.num_computed_tokens
+        num_new_tokens = min(num_new_tokens, token_budget)
+        new_blocks = self.kv_cache_manager.allocate_slots(request, num_new_tokens)
+        if new_blocks is None:
+            # Preempt lowest-priority running request and retry
+            self._preempt_request(preempted_req)
+        ...
+
+    # Phase 2: Schedule WAITING requests with remaining budget
+    while self.waiting and token_budget > 0:
+        num_computed_tokens = self.kv_cache_manager.get_computed_blocks(request)
+        num_new_tokens = request.num_tokens - num_computed_tokens
+        num_new_tokens = min(num_new_tokens, token_budget)
+        new_blocks = self.kv_cache_manager.allocate_slots(request, num_new_tokens)
+        ...
+```
+
+**NanoGPT: `Scheduler.schedule()`** ([nanogpt-paged-attention.py:L450-L465](../../nanogpt-paged-attention.py))
+
+```python
+def schedule(self, step: int):
+    self._maybe_admit(step)     # promote waiting → prefilling if memory allows
+    self._maybe_preempt()       # evict if over memory budget
+
+    prefill_req = self.prefilling[0] if self.prefilling else None
+    decode_reqs = list(self.active)
+
+    return prefill_req, decode_reqs
+```
+
+| Feature | vLLM | NanoGPT |
+|---------|------|---------| 
+| Scheduling priority | Running requests first, then waiting | Admit first, then preempt |
+| Token budget enforcement | Explicit `token_budget` countdown in both phases | Token budget checked only at admission |
+| Chunked prefill | Native — request gets `min(remaining_tokens, token_budget)` per step | External — the caller (`interleaved_generate`) computes the chunk size |
+| Multiple prefill requests per step | Yes — multiple waiting requests can be admitted in one step | No — at most 1 prefilling request at a time |
+| Fused prefill + decode | Implicit — running and waiting requests share the same token budget | Explicit — `assemble_fused_batch()` builds a combined batch |
+| Output structure | `SchedulerOutput` dataclass with block IDs, token counts, encoder inputs | `(prefill_req, decode_reqs)` tuple |
+| Admission + allocation | Combined — `allocate_slots()` is called during scheduling | Separate — `_maybe_admit()` allocates blocks, `maybe_allocate_block()` happens later |
+
+**Key Insight:** vLLM's two-phase design (running first, waiting second) ensures that **existing requests always make progress** before new ones are admitted. This prevents starvation. NanoGPT's simpler approach calls `_maybe_admit()` before checking running requests, which works in the educational context but doesn't guarantee that running requests are prioritized.
+
+---
+
+#### 9c. Admission Control
+
+**vLLM** (waiting loop in `schedule()`, [scheduler.py:L563-L855](../../vllm/vllm/v1/core/sched/scheduler.py)):
+
+```python
+# Waiting scheduling checks:
+if len(self.running) == self.max_num_running_reqs:
+    break                              # batch size limit
+
+num_computed_tokens = self.kv_cache_manager.get_computed_blocks(request)
+num_new_tokens = request.num_tokens - num_computed_tokens
+num_new_tokens = min(num_new_tokens, token_budget)
+
+new_blocks = self.kv_cache_manager.allocate_slots(request, num_new_tokens)
+if new_blocks is None:
+    break                              # memory limit
+```
+
+**NanoGPT: `Scheduler._maybe_admit()`** ([nanogpt-paged-attention.py:L403-L431](../../nanogpt-paged-attention.py)):
+
+```python
+def _maybe_admit(self, step):
+    candidate = self.waiting[0]
+    blocks_needed = (prompt_len + self.block_size - 1) // self.block_size
+
+    if self.block_allocator.num_free < blocks_needed:
+        return                             # memory check
+
+    num_cached = find_cached_prefix(self.block_cache, candidate.prompt_tokens, ...)
+    actual_compute = prompt_len - num_cached
+    needed_compute = min(actual_compute, self.token_budget)
+
+    if self.current_compute_tokens + needed_compute > self.token_budget:
+        return                             # budget check
+
+    candidate.block_table = self.block_allocator.allocate_n(blocks_needed)
+```
+
+| Feature | vLLM | NanoGPT |
+|---------|------|---------| 
+| Memory check | `allocate_slots()` returns `None` if insufficient blocks | `block_allocator.num_free < blocks_needed` |
+| Budget check | `min(num_new_tokens, token_budget)` | `current_compute_tokens + needed_compute > token_budget` |
+| Prefix cache integration | `get_computed_blocks()` returns already-cached token count | `find_cached_prefix()` walks the hash chain |
+| Block allocation timing | Allocated during scheduling (inside `allocate_slots`) | All blocks allocated up front at admission |
+| Partial admission | Yes — request gets only what fits in the budget (chunked prefill) | No — entire block allocation happens or nothing |
+| Multiple admissions per step | Yes — loop continues until budget exhausted | No — admits at most one request per step |
+| LoRA constraint | Checks `max_loras` limit before admitting | Not applicable |
+| Encoder budget | Separate `encoder_compute_budget` for multimodal inputs | Not applicable |
+
+**Key Insight:** vLLM allocates blocks **lazily per-step** — a request only gets the blocks it needs for this step's tokens. NanoGPT allocates **all blocks up-front** when the request is admitted. vLLM's approach is more memory-efficient (a long prompt only consumes blocks as it's actually prefilled), but NanoGPT's approach avoids mid-generation allocation failures.
+
+---
+
+#### 9d. Preemption
+
+**vLLM: `Scheduler._preempt_request()`** ([scheduler.py:L961-L981](../../vllm/vllm/v1/core/sched/scheduler.py)):
+
+```python
+def _preempt_request(self, request):
+    self.kv_cache_manager.free(request)
+    self.encoder_cache_manager.free(request)
+    request.status = RequestStatus.PREEMPTED
+    request.num_computed_tokens = 0
+    request.num_preemptions += 1
+    self.waiting.prepend_request(request)
+```
+
+Preemption is triggered **inline** during the running scheduling loop when `allocate_slots()` returns `None`:
+
+```python
+while True:
+    new_blocks = self.kv_cache_manager.allocate_slots(request, num_new_tokens)
+    if new_blocks is not None:
+        break
+    # Preempt lowest-priority running request
+    preempted_req = max(self.running, key=lambda r: (r.priority, r.arrival_time))
+    self._preempt_request(preempted_req)
+```
+
+**NanoGPT: `Scheduler._maybe_preempt()`** ([nanogpt-paged-attention.py:L434-L448](../../nanogpt-paged-attention.py)):
+
+```python
+def _maybe_preempt(self):
+    kv_used = sum(len(req.prompt_tokens) + req.num_generated 
+                  for req in self.active + self.prefilling)
+
+    while self.active and kv_used > self.max_kv_tokens:
+        victim = max(self.active, key=lambda r: (r.priority, -r.arrival_time))
+        victim.clear_cache(self.block_allocator)
+        victim.prefill_cursor = 0
+        victim.generated_tokens = []
+        heapq.heappush(self.waiting, (*key, victim.id, victim))
+        ...
+```
+
+| Feature | vLLM | NanoGPT |
+|---------|------|---------| 
+| Trigger | Memory allocation failure (`allocate_slots()` returns `None`) | KV token count exceeds `max_kv_tokens` threshold |
+| Timing | During running request scheduling (demand-driven) | After admission, before scheduling (proactive) |
+| Victim selection | Lowest priority, then latest arrival (FCFS) or configurable | Lowest priority, then earliest arrival |
+| State reset | `num_computed_tokens = 0`, KV freed | `prefill_cursor = 0`, `generated_tokens = []`, blocks freed |
+| Requeue position | `prepend_request()` — front of waiting queue (high priority re-admission) | `heappush()` — sorted by priority/arrival into waiting queue |
+| Preemption counter | `num_preemptions` tracked for metrics | Not tracked |
+| Preempt-and-retry | Yes — after preempting, retries `allocate_slots()` for the original request | No — preemption and admission are separate phases |
+| Cached block preservation | Freed blocks go to end of free queue (may retain cache data) | Blocks fully freed; cached data may persist in `BlockCache` |
+
+**Key Insight:** vLLM's preemption is **demand-driven and surgical** — it only preempts when a specific request can't get blocks, and it retries immediately after freeing. NanoGPT's preemption is **threshold-driven** — it checks a global memory watermark and preempts proactively. vLLM's approach is more efficient (preempt only what's necessary), while NanoGPT's is simpler to reason about.
+
+---
+
+#### 9e. Request Queue
+
+**vLLM: `RequestQueue`** ([request_queue.py](../../vllm/vllm/v1/core/sched/request_queue.py))
+
+```python
+class FCFSRequestQueue(deque[Request], RequestQueue):
+    def add_request(self, request): self.append(request)
+    def pop_request(self): return self.popleft()
+    def prepend_request(self, request): self.appendleft(request)
+
+class PriorityRequestQueue(RequestQueue):
+    def __init__(self): self._heap: list[Request] = []
+    def add_request(self, request): heapq.heappush(self._heap, request)
+    def pop_request(self): return heapq.heappop(self._heap)
+```
+
+**NanoGPT: waiting queue** ([nanogpt-paged-attention.py:L396-L398](../../nanogpt-paged-attention.py))
+
+```python
+def add_request(self, req):
+    key = self._sort_key(req)
+    heapq.heappush(self.waiting, (*key, req.id, req))
+```
+
+| Feature | vLLM | NanoGPT |
+|---------|------|---------| 
+| Queue abstraction | `RequestQueue` ABC with two implementations | Inline heap with tuple keys |
+| FCFS implementation | `deque` — O(1) front/back operations | `heapq` with `(0, arrival_time, id, req)` keys |
+| Priority implementation | Min-heap on `Request.__lt__` (priority, arrival_time, request_id) | `heapq` with `(priority, arrival_time, id, req)` keys |
+| Skipped requests | Separate `skipped_waiting` queue for blocked requests | Not implemented |
+| Request ordering | `Request.__lt__` defines canonical ordering | Manual sort key construction |
+| Polymorphism | Factory function `create_request_queue(policy)` | `_sort_key()` method switches on policy string |
+
+---
+
+#### 9f. Output Processing
+
+**vLLM: `Scheduler.update_from_output()`** ([scheduler.py:L1299-L1500](../../vllm/vllm/v1/core/sched/scheduler.py))
+
+vLLM has a dedicated 200-line method that processes model outputs after each forward pass:
+
+```python
+def update_from_output(self, scheduler_output, model_runner_output):
+    for req_id, num_tokens_scheduled in num_scheduled_tokens.items():
+        generated_token_ids = sampled_token_ids[req_index]
+        
+        # Handle spec decoding rejections
+        if scheduled_spec_token_ids and generated_token_ids:
+            num_rejected = num_draft_tokens - (len(generated_token_ids) - 1)
+            request.num_computed_tokens -= num_rejected
+        
+        # Check stop conditions (EOS, length cap, repetition)
+        new_token_ids, stopped = self._update_request_with_output(request, ...)
+        
+        # Build EngineCoreOutput per request
+        outputs[request.client_index].append(EngineCoreOutput(...))
+```
+
+**NanoGPT** (inline in `interleaved_generate`, [nanogpt-paged-attention.py:L936-L960](../../nanogpt-paged-attention.py)):
+
+```python
+# Decode output processing
+logits_decode = logits[:len(decode_reqs), -1, :]
+probs = F.softmax(logits_decode, dim=-1)
+idx_next = torch.multinomial(probs, num_samples=1)
+
+for i, req in enumerate(decode_reqs):
+    req.generated_tokens.append(idx_next[i].item())
+    if req.is_done:
+        scheduler.complete(req)
+
+# Prefill completion
+if prefill_req.is_fully_prefilled:
+    scheduler.promote(prefill_req)
+```
+
+| Feature | vLLM | NanoGPT |
+|---------|------|---------| 
+| Separation | Dedicated `update_from_output()` method on Scheduler | Inline in the generation loop |
+| Stop conditions | EOS, stop tokens, length cap, repetition detection, abort | `num_generated >= max_new_tokens` only |
+| Spec decode handling | Adjusts `num_computed_tokens` by number of rejected tokens | Not applicable |
+| Logprobs | Extracted and attached to output per request | Not extracted |
+| Structured output | Grammar state advanced per token | Not applicable |
+| Output format | `EngineCoreOutput` per request, routed by `client_index` | Direct mutation of `Request.generated_tokens` |
+| Sampling | Done by model runner (separate process) | Inline `softmax` → `multinomial` |
+| KV cache update | Implicit (model runner writes to GPU memory via kernels) | Explicit `disassemble_paged_fused()` scatters KV back to pool |
+
+**Key Insight:** In vLLM, the scheduler **never touches model outputs directly** — sampling happens in the model runner process, and the scheduler only processes the resulting token IDs. This clean separation enables async scheduling (overlapping scheduling step N+1 with model execution step N). In NanoGPT, sampling and scheduling are interleaved in the same loop, which is simpler but couples the two concerns.
+
+---
+
 ## Summary: What NanoGPT Captures vs What Production Requires
 
 | Concept | NanoGPT | vLLM | Notes |
@@ -395,6 +692,13 @@ def write_kv_to_pool(pool, block_table, block_size, start_pos, k_new, v_new, lay
 | KV cache events (distributed) | ❌ | ✅ | For P/D separation, offloading |
 | GPU kernel integration | ❌ (Python indexing) | ✅ (CUDA kernels) | Performance-critical |
 | Metrics / observability | ❌ | ✅ | Production monitoring |
+| Unified prefill/decode scheduling | ❌ (explicit phases) | ✅ (`num_computed_tokens` model) | Enables chunked prefill naturally |
+| Running-first scheduling | ❌ (admit first) | ✅ (running first, then waiting) | Prevents starvation |
+| Demand-driven preemption | ❌ (threshold-based) | ✅ (allocation failure triggers) | More efficient |
+| Lazy block allocation | ❌ (all blocks up-front) | ✅ (per-step allocation) | Better memory utilization |
+| Multiple prefill per step | ❌ (one at a time) | ✅ (budget-limited) | Higher throughput |
+| Async scheduling | ❌ | ✅ (overlaps with model execution) | Production latency |
+| Scheduler/sampler separation | ❌ (inline) | ✅ (separate processes) | Enables async + PP |
 
 ## The Three Biggest Differences
 
