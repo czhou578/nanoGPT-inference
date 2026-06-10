@@ -2,7 +2,7 @@
 Radix tree benchmark runner.
 
 Usage:
-1. Import near the bottom of nanogpt-radix-tree-.py:
+1. Import near the bottom of nanogpt-radix-tree.py:
 
        from benchmarks.radix_tree_benchmark_runs import (
            run_radix_tree_benchmark_suite,

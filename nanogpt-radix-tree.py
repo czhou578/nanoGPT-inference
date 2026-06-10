@@ -1,3 +1,23 @@
+"""
+NanoGPT + RadixAttention — Radix Tree Prefix Caching.
+
+Replaces the flat hash-map block cache with a compressed trie (radix tree)
+that captures hierarchical prefix sharing. Multiple requests branching
+from the same system prompt share a single edge in the tree, with each
+branch storing only its unique suffix KV data.
+
+Builds on: nanogpt-interleaving.py
+Key additions:
+    - RadixNode / RadixTree — compressed trie with variable-length edges
+    - match_prefix() — longest-prefix matching with mid-edge splitting
+    - _split_node() — partitions token sequence and KV tensors at split point
+    - lock_ref / unlock_radix_path() — reference counting (leaf → root)
+    - load_from_radix_tree() — loads cached KV data into request cache
+    - insert_into_radix_tree() — deduplicating insertion after prefill
+
+Run:
+    python nanogpt-radix-tree.py
+"""
 import torch
 import torch.nn as nn
 from torch.nn import functional as F

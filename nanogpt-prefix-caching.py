@@ -1,3 +1,22 @@
+"""
+NanoGPT + Prefix Caching — Content-Addressed KV Block Cache.
+
+Adds a global BlockCache that stores computed KV blocks keyed by chained
+MD5 hashes: hash(parent_hash, token_ids). When a new request shares a
+prefix with a previous request, the cached KV data is loaded directly,
+skipping redundant prefill computation.
+
+Builds on: nanogpt-chunked-prefill.py
+Key additions:
+    - BlockCache with LRU eviction (max_blocks configurable)
+    - hash_block_tokens() — chained hashing for position-aware block identity
+    - find_cached_prefix() — walks prompt block-by-block looking up hashes
+    - load_cached_blocks() / commit_completed_blocks() — cache I/O
+    - Scheduler integration: admission checks account for cached prefix length
+
+Run:
+    python nanogpt-prefix-caching.py
+"""
 import torch
 import torch.nn as nn
 from torch.nn import functional as F

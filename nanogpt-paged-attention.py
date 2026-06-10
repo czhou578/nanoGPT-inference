@@ -1,3 +1,24 @@
+"""
+NanoGPT + PagedAttention — Block-Based KV Cache Management.
+
+Replaces contiguous per-request KV caches with a block allocator and
+physical memory pool, inspired by OS virtual memory. Each request
+maintains a block_table (logical → physical mapping), and KV data is
+scattered/gathered between the pool and model I/O.
+
+Builds on: nanogpt-chunked-prefill.py
+Key additions:
+    - KVBlockPool — pre-allocated GPU tensors per (layer, head)
+    - BlockAllocator — free list with allocate/free operations
+    - Block table indirection (logical token position → physical block + slot)
+    - write_kv_to_pool() / gather_kv_from_pool() for block-level I/O
+    - assemble_paged_cache() / disassemble_paged_cache() for batching
+    - Content-hashed prefix caching with chained MD5 block hashes
+    - Fused prefill-decode interleaving with paged memory
+
+Run:
+    python nanogpt-paged-attention.py
+"""
 import enum
 from numpy import dtype
 import torch

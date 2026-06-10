@@ -1,3 +1,21 @@
+"""
+NanoGPT + Speculative Decoding — Trigram Draft Model.
+
+Extends the bigram draft model to condition on two tokens of context:
+P(next|prev, current). Falls back to bigram when a (prev, current) pair
+has insufficient observations. Temperature-scaled sampling controls
+draft diversity.
+
+Builds on: nanogpt-spec-decode.py
+Key additions:
+    - TrigramDraftModel — (vocab_size, vocab_size, vocab_size) count tensor
+    - Automatic bigram fallback below min_context_count threshold
+    - Temperature-scaled sampling for draft diversity control
+    - Same verification pipeline as the bigram variant
+
+Run:
+    python nanogpt-trigram-spec-decode.py
+"""
 import torch
 import torch.nn as nn
 from torch.nn import functional as F

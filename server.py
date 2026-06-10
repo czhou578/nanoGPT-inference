@@ -47,8 +47,8 @@ import uvicorn
 # ── Load engine module ────────────────────────────────────────────────────────
 
 def _load_engine_module():
-    """Import nanogpt-radix-tree-.py despite its non-standard filename."""
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nanogpt-radix-tree-.py")
+    """Import nanogpt-radix-tree.py via importlib (hyphenated filename)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nanogpt-radix-tree.py")
     spec = importlib.util.spec_from_file_location("_nanogpt_engine", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

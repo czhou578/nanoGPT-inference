@@ -1,12 +1,31 @@
 # 🧠 NanoGPT Inference Engine — From First Principles
 
-A deep-dive systems project that **implements 10 production inference optimizations from scratch** on top of Andrej Karpathy's NanoGPT, each paired with automated benchmark suites and interactive browser-based visualizations. The goal is to demonstrate a first-principles understanding of how modern LLM inference engines (like vLLM) work internally — not by reading about them, but by building each component by hand.
+A deep-dive systems project that **implements 12 production inference optimizations from scratch** on top of Andrej Karpathy's NanoGPT, each paired with automated benchmark suites and interactive browser-based visualizations. The goal is to demonstrate a first-principles understanding of how modern LLM inference engines (like vLLM and SGLang) work internally — not by reading about them, but by building each component by hand.
 
-> **TL;DR** — Trained a character-level GPT on Shakespeare, then progressively added KV caching, continuous batching, paged attention, chunked prefill, prefix caching, scheduling, speculative decoding, interleaved prefill-decode, and INT8 quantization. Every optimization is benchmarked for throughput and latency, and the key concepts are visualized in a React-based interactive simulation frontend.
+> **TL;DR** — Trained a character-level GPT on Shakespeare, then progressively added KV caching, continuous batching, paged attention, chunked prefill, prefix caching, scheduling, speculative decoding, interleaved prefill-decode, INT8 quantization, radix tree prefix caching, and a streaming HTTP server. Every optimization is benchmarked for throughput and latency, the key concepts are visualized in a React-based interactive simulation frontend, and the implementations are compared side-by-side against vLLM and SGLang production code.
 
 ---
 
 ## 📐 Architecture Overview
+
+### Optimization Progression
+
+```mermaid
+graph LR
+    A["nanogpt.py\nBaseline"] --> B["KV Cache"]
+    B --> C["Continuous\nBatching"]
+    C --> D["Chunked\nPrefill"]
+    D --> E["Paged\nAttention"]
+    E --> F["Prefix\nCaching"]
+    F --> G["Scheduling"]
+    G --> H["Interleaving"]
+    H --> I["Spec Decode"]
+    I --> J["Quantization"]
+    J --> K["Radix Tree"]
+    K --> L["Streaming\nServer"]
+```
+
+### Repository Structure
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
@@ -24,9 +43,11 @@ A deep-dive systems project that **implements 10 production inference optimizati
 │  nanogpt-spec-decode.py        ← + Speculative decoding (bigram)     │
 │  nanogpt-trigram-spec-decode.py← + Trigram draft model variant        │
 │  nanogpt-quantize.py           ← + Dynamic & Static INT8 quantization│
+│  nanogpt-radix-tree.py         ← + RadixAttention prefix caching     │
+│  server.py                     ← + Streaming HTTP server (FastAPI)   │
 │                                                                       │
-│  benchmarks/                   ← Automated benchmark suites (22 files)│
-│  results/                      ← Raw benchmark output (10 files)     │
+│  benchmarks/                   ← Automated benchmark suites (25 files)│
+│  results/                      ← Raw benchmark output (11 files)     │
 │  notes/                        ← 30+ research notes & writeups       │
 │  nanogpt-notebooks/            ← Jupyter notebooks for exploration   │
 │  frontend/                     ← React + Vite interactive visualizer │
@@ -165,6 +186,43 @@ Each optimization is a standalone Python file that extends the base NanoGPT mode
 
 ---
 
+### 11. RadixAttention Prefix Caching — `nanogpt-radix-tree.py`
+**Problem:** Flat hash-map prefix caching can't efficiently share overlapping prefixes across branching conversation trees (e.g., multiple continuations of the same system prompt).
+
+**Implementation:**
+- `RadixNode` and `RadixTree` — a compressed trie (radix tree) where each edge is a variable-length sequence of token IDs, and each node stores the corresponding KV cache data
+- `match_prefix()` — longest-prefix matching with automatic mid-edge node splitting when a match ends inside an existing edge
+- `_split_node()` — splits an edge at an arbitrary position, partitioning both the token sequence and the KV tensors between the new mid-node and the shortened child
+- `lock_ref` / `unlock_radix_path()` — reference counting from leaf to root prevents eviction of nodes currently in use by active requests
+- `insert()` — inserts new token sequences and their KV data, deduplicating against existing prefixes
+- Integrated with the scheduler: `load_from_radix_tree()` loads cached KV data and advances `prefill_cursor` past the cached portion
+
+**Key insight:** The radix tree naturally captures the hierarchical structure of prompt sharing — a single "system prompt" edge can serve as the root for thousands of user-specific branches, with each branch only storing its unique suffix KV data.
+
+---
+
+### 12. Streaming HTTP Server — `server.py`
+**Problem:** Real serving requires concurrent HTTP requests, streaming token output, and safe concurrency between asyncio and blocking PyTorch inference.
+
+**Implementation:**
+- **FastAPI + SSE** — Server-Sent Events stream tokens to clients as they're generated, enabling real-time output
+- **Thread-safe queue bridge** — HTTP handlers (async) submit requests via `engine.submit()`, which returns an `asyncio.Queue`. The engine's background thread pushes tokens via `loop.call_soon_threadsafe()`, bridging the sync PyTorch world with the async HTTP world
+- **Continuous background loop** — `InferenceEngine.run_loop()` mirrors the batch generation loop but never terminates, continuously draining pending requests and scheduling work
+- **Radix tree integration** — Prefix caching is active during serving, so repeated prompts get instant cache hits
+- **Health endpoint** — `/health` exposes engine state (step count, queue depths) for monitoring
+
+```bash
+# Start the server
+python server.py
+
+# Stream tokens from a prompt
+curl -N http://localhost:8000/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "First Citizen:", "max_tokens": 50}'
+```
+
+---
+
 ## 📊 Benchmark Suites
 
 Every optimization includes an automated benchmark harness in `benchmarks/` that measures:
@@ -229,6 +287,15 @@ A React + Vite web application that provides interactive, step-by-step visualiza
 
 ---
 
+## 🔬 Production Codebase Comparisons
+
+Side-by-side comparisons between the NanoGPT implementations and production inference engines, highlighting where the same concept maps to fundamentally different code and why:
+
+- **[vLLM Comparison](notes/vllm-comparison.md)** — Block management (reference counting, intrusive linked lists, eager hashing), scheduler architecture (unified `num_computed_tokens` model, running-first scheduling, demand-driven preemption), and memory ownership patterns
+- **[SGLang Comparison](notes/sglang-comparison.md)** — Radix tree design (KV indices vs. tensor data, `RadixKey` with exponential-search matching, fine-grained leaf-first eviction, host ↔ device tiering)
+
+---
+
 ## 📚 Research Notes
 
 The `notes/` directory contains extensive first-principles research across three areas:
@@ -271,7 +338,15 @@ Detailed analysis reports for each benchmark suite, including methodology, resul
 ### Prerequisites
 - Python 3.10+
 - PyTorch 2.0+
-- Node.js 18+
+- Node.js 18+ (for the frontend)
+
+### Installation
+
+```bash
+git clone https://github.com/czhou578/nanoGPT-inference.git
+cd nanoGPT-inference
+pip install -r requirements.txt
+```
 
 ### Running an Inference Optimization
 
@@ -283,6 +358,19 @@ python nanogpt-kv-cache.py
 
 # Example: Run speculative decoding with trigram draft model
 python nanogpt-trigram-spec-decode.py
+
+# Example: Run the radix tree implementation
+python nanogpt-radix-tree.py
+```
+
+### Running the Streaming Server
+
+```bash
+python server.py
+# Then in another terminal:
+curl -N http://localhost:8000/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "First Citizen:", "max_tokens": 50}'
 ```
 
 ### Running the Frontend
@@ -312,7 +400,10 @@ Navigate to `http://localhost:5173` to explore the interactive simulations and k
 ├── nanogpt-spec-decode.py            # Speculative decoding (bigram draft)
 ├── nanogpt-trigram-spec-decode.py    # Speculative decoding (trigram draft)
 ├── nanogpt-quantize.py               # Dynamic + static INT8 quantization
+├── nanogpt-radix-tree.py             # RadixAttention prefix caching
+├── server.py                          # Streaming FastAPI server
 ├── input.txt                          # Tiny Shakespeare training data
+├── requirements.txt                   # Python dependencies
 │
 ├── benchmarks/                        # Automated benchmark suites
 │   ├── kv_cache_baseline_benchmark_runs.py
@@ -324,14 +415,16 @@ Navigate to `http://localhost:5173` to explore the interactive simulations and k
 │   ├── interleaving_benchmark_runs.py
 │   ├── speculative_decoding_benchmark_runs.py
 │   ├── trigram_speculative_decoding_benchmark_runs.py
+│   ├── radix_tree_benchmark_runs.py
 │   ├── simulation_benchmark_runs.py
+│   ├── test_correctness_equivalence.py
 │   └── ... (benchmark implementations + plots)
 │
 ├── results/                           # Raw benchmark output
 │   ├── kv_cache_results.txt
 │   ├── continuous_batching_results.txt
-│   ├── paged_attent_results.txt
-│   └── ... (10 result files)
+│   ├── paged_attention_results.txt
+│   └── ... (11 result files)
 │
 ├── nanogpt-notebooks/                 # Jupyter notebooks for exploration
 │   ├── nanogpt-kv-cache.ipynb
@@ -340,6 +433,8 @@ Navigate to `http://localhost:5173` to explore the interactive simulations and k
 │   └── ... (10 notebooks)
 │
 ├── notes/
+│   ├── vllm-comparison.md             # Side-by-side vs vLLM internals
+│   ├── sglang-comparison.md           # Side-by-side vs SGLang radix cache
 │   ├── concepts/                      # 31 in-depth research articles
 │   ├── benchmark-writeups/            # 10 benchmark analysis reports
 │   └── plans/                         # Implementation planning documents

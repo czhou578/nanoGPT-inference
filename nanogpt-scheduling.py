@@ -1,3 +1,22 @@
+"""
+NanoGPT + Scheduling — FCFS and Priority Scheduling with Preemption.
+
+Adds a proper Scheduler class with configurable policies (FCFS, priority)
+and memory-aware admission control. Requests are managed through a
+state machine (waiting → prefilling → active → done) with preemption
+support that evicts the lowest-priority active request under memory pressure.
+
+Builds on: nanogpt-prefix-caching.py
+Key additions:
+    - Scheduler class with heap-based waiting queue
+    - _maybe_admit() — memory-budget-aware admission
+    - _maybe_preempt() — evicts lowest-priority request when KV usage exceeds threshold
+    - Configurable policies: FCFS (arrival-time ordered) and Priority (lower = higher)
+    - Request lifecycle with preemption re-entry
+
+Run:
+    python nanogpt-scheduling.py
+"""
 import heapq
 import torch
 import torch.nn as nn

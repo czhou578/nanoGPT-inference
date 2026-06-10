@@ -1,3 +1,23 @@
+"""
+NanoGPT + KV Cache — Prefill/Decode Split.
+
+Adds key-value caching to the baseline transformer. During inference, the
+prefill phase processes the full prompt once, and subsequent decode steps
+feed only the new token while attending over the cached K/V tensors.
+Eliminates O(n²) redundant recomputation.
+
+Builds on: nanogpt.py
+Key additions:
+    - Per-head key_cache / value_cache tensors
+    - Prefill phase (full prompt) → decode phase (single token)
+    - start_pos parameter for correct positional embeddings during decode
+    - clear_kv_cache() for cache lifecycle management
+
+Benchmark: ~2.6× throughput improvement over no-cache generation.
+
+Run:
+    python nanogpt-kv-cache.py
+"""
 import torch
 import torch.nn as nn
 from torch.nn import functional as F

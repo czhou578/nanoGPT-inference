@@ -1,6 +1,19 @@
 """
-Chunked Prefill
+NanoGPT + Chunked Prefill — Interleaved Prefill and Decode.
 
+Splits long prompt prefill into fixed-size chunks so that decode steps
+for active requests aren't blocked by a single large prefill. Each
+scheduler step processes one prefill chunk AND one decode token for all
+active requests, sharing a global token budget.
+
+Builds on: nanogpt-continuous-batching.py
+Key additions:
+    - prefill_cursor tracks partial progress through the prompt
+    - Token budget shared between prefill chunks and decode tokens
+    - Explicit position embeddings for correct encoding at arbitrary offsets
+
+Run:
+    python nanogpt-chunked-prefill.py
 """
 
 import enum

@@ -1,5 +1,21 @@
-import enum
-import enum
+"""
+NanoGPT + Continuous Batching — Dynamic Request Scheduling.
+
+Replaces static batching with a scheduler that dynamically admits and
+retires requests at every decode step. Each request carries its own KV
+cache, and assemble_batch_cache() / disassemble_batch_cache() handle
+left-padding variable-length caches into batched tensors.
+
+Builds on: nanogpt-kv-cache.py
+Key additions:
+    - Request dataclass with per-request state and KV cache
+    - assemble_batch_cache() / disassemble_batch_cache() for variable-length batching
+    - scheduled_generate() — event loop with dynamic admission
+    - Token budget enforcement
+
+Run:
+    python nanogpt-continuous-batching.py
+"""
 from typing import Tuple
 from typing import Dict
 from typing import List
@@ -7,7 +23,6 @@ from dataclasses import dataclass, field
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-import time
 from benchmarks.continuous_batching_benchmark_runs import (
     run_continuous_batching_benchmark_suite,
 )

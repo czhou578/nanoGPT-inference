@@ -1,6 +1,6 @@
 # Paged Attention Benchmark Results Write-up
 
-This note explains the results in [`paged_attent_results.txt`](../paged_attent_results.txt) for the contiguous KV vs paged KV benchmark implemented in [`benchmarks/paged_attention.py`](../benchmarks/paged_attention.py) and configured by [`benchmarks/paged_attention_benchmark_runs.py`](../benchmarks/paged_attention_benchmark_runs.py).
+This note explains the results in [`paged_attention_results.txt`](../paged_attention_results.txt) for the contiguous KV vs paged KV benchmark implemented in [`benchmarks/paged_attention.py`](../benchmarks/paged_attention.py) and configured by [`benchmarks/paged_attention_benchmark_runs.py`](../benchmarks/paged_attention_benchmark_runs.py).
 
 ## Executive Summary
 
