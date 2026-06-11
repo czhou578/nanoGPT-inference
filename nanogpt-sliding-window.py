@@ -25,7 +25,7 @@ import heapq
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple
 from dataclasses import dataclass
-from benchmarks.scheduling_benchmark_runs import run_scheduling_benchmark_suite
+from benchmarks.sliding_window_benchmark_runs import run_sliding_window_benchmark_suite
 
 
 # # hyperparameters
@@ -646,7 +646,7 @@ def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_t
     
         return scheduler
     
-run_scheduling_benchmark_suite(
+run_sliding_window_benchmark_suite(
     m,
     vocab_size=vocab_size,
     device=device,
