@@ -19,9 +19,12 @@ Run:
     python nanogpt-radix-tree.py
 """
 import torch
+import time
 import torch.nn as nn
-from torch.nn import functional as F
 import heapq
+import threading
+import queue
+from torch.nn import functional as F
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple, Optional
 
@@ -723,6 +726,162 @@ def insert_into_radix_tree(request, tree, block_size):
     """Insert a request's prompt tokens and KV data into the radix tree."""
     tree.insert(request.prompt_tokens, request.kv_cache, block_size)
 
+def prefill_worker(model, request_queue, kv_transfer_queue, stop_event):
+    """
+    Runs in a separate thread. Pulls requests from request_queue,
+    runs full prefill, sends KV cache to decode worker.
+    """
+    model.eval()
+
+    with torch.no_grad():
+        while not stop_event.is_set():
+            try:
+                request = request_queue.get(timeout=0.05)
+            except queue.Empty:
+                continue
+        
+            
+            t0 = time.perf_counter()
+
+            prompt = torch.tensor([request.prompt_tokens], device=device)
+            logits, _, new_kvs = model(prompt)
+
+            kv_cache = {}
+            for li, bkv in enumerate(new_kvs):
+                for hi, (k, v) in enumerate(bkv):
+                    kv_cache[(li, hi)] = (k.clone(), v.clone())
+            
+            # Sample first token
+            logits = logits[:, -1, :]
+            probs = F.softmax(logits, dim=-1)
+            first_token = torch.multinomial(probs, num_samples=1)            
+
+            prefill_ms = (time.perf_counter() - t0) * 1000
+
+            print(f"  [PREFILL] req {request.id}: {len(request.prompt_tokens)} tokens → "
+                  f"KV transfer ({prefill_ms:.1f}ms)")
+
+            transfer = KVTransfer(
+                request_id=request.id,
+                prompt_tokens=request.prompt_tokens,
+                max_new_tokens=request.max_new_tokens,
+                kv_cache=kv_cache,
+                first_token_id=first_token.item(),
+                prefill_time_ms=prefill_ms,
+            )
+
+            kv_transfer_queue.put(transfer)
+
+def decode_worker(model, kv_transfer_queue, results_queue, stop_event,
+                  max_batch_size=4):
+    """
+    Runs in a separate thread. Receives pre-filled requests from
+    kv_transfer_queue, runs autoregressive decode, sends completed
+    requests to results_queue.
+    """
+    model.eval()
+    active_requests = []
+
+    with torch.no_grad():
+        step = 0
+        while not stop_event.is_set() or active_requests:
+            # Drain the transfer queue — admit new pre-filled requests
+            while not kv_transfer_queue.empty() and len(active_requests) < max_batch_size:
+                transfer = kv_transfer_queue.get()
+                req = Request(
+                    id=transfer.request_id,
+                    prompt_tokens=transfer.prompt_tokens,
+                    max_new_tokens=transfer.max_new_tokens,
+                    kv_cache=transfer.kv_cache,
+                    status="active",
+                )
+                req.generated_tokens.append(transfer.first_token_id)
+                req._last_token = torch.tensor([[transfer.first_token_id]], device=device)
+                req.prefill_cursor = len(req.prompt_tokens)  # fully prefilled
+                active_requests.append(req)
+
+            if not active_requests:
+                time.sleep(0.01)
+                continue
+
+            # Standard batched decode — identical to your existing code
+            batch_tokens = torch.cat([r._last_token for r in active_requests])
+            batch_positions = torch.tensor(
+                [[len(r.tokens_so_far) - 1] for r in active_requests],
+                device=device,
+            )
+
+            past_kvs, attn_mask, pad_lengths = assemble_batch_cache(active_requests)
+            logits, _, new_kvs = model(
+                batch_tokens, pos=batch_positions,
+                past_kvs=past_kvs, attn_mask=attn_mask,
+            )
+
+            logits = logits[:, -1, :]
+            probs = F.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+
+            disassemble_batch_cache(active_requests, new_kvs, pad_lengths)
+
+            for i, req in enumerate(active_requests):
+                req.generated_tokens.append(idx_next[i].item())
+                req._last_token = idx_next[i:i + 1]
+
+            print(f"  [DECODE]  step {step}: batch={len(active_requests)} "
+                  f"({', '.join(f'req{r.id}' for r in active_requests)})")
+            step += 1
+
+            still_active = []
+            for req in active_requests:
+                if req.is_done:
+                    results_queue.put(req)
+                else:
+                    still_active.append(req)
+            active_requests = still_active
+
+def disaggregated_generate(model, requests, max_batch_size=4):
+    """
+    Disaggregated prefill/decode: two workers, KV cache handoff via queue.
+    """
+    request_queue = queue.Queue()
+    kv_transfer_queue = queue.Queue()
+    results_queue = queue.Queue()
+    stop_event = threading.Event()
+
+    # Both workers use the SAME model (shared weights, different forward passes)
+    prefill_thread = threading.Thread(
+        target=prefill_worker,
+        args=(model, request_queue, kv_transfer_queue, stop_event),
+        daemon=True,
+    )
+    decode_thread = threading.Thread(
+        target=decode_worker,
+        args=(model, kv_transfer_queue, results_queue, stop_event, max_batch_size),
+        daemon=True,
+    )
+
+    prefill_thread.start()
+    decode_thread.start()
+
+    # Enqueue all requests for prefill
+    for req in requests:
+        request_queue.put(req)
+        
+    # Wait for all requests to complete
+    completed = 0
+    while completed < len(requests):
+        try:
+            req = results_queue.get(timeout=0.5)
+            completed += 1
+        except queue.Empty:
+            continue
+    
+    stop_event.set()
+    prefill_thread.join()
+    decode_thread.join()
+    
+    return requests
+
 def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_tokens=256):
     scheduler = Scheduler(policy, token_budget=token_budget, max_kv_tokens=max_kv_tokens)
 
@@ -829,11 +988,11 @@ def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_t
 if __name__ == "__main__":
     # ── Run benchmarks ────────────────────────────────────────────────────────────
 
-    from benchmarks.radix_tree_benchmark_runs import (
-        run_radix_tree_benchmark_suite,
+    from benchmarks.disaggregated_prefill_benchmark_runs import (
+        run_disaggregated_prefill_benchmark_suite,
     )
 
-    run_radix_tree_benchmark_suite(
+    run_disaggregated_prefill_benchmark_suite(
         m,
         vocab_size=vocab_size,
         device=device,
