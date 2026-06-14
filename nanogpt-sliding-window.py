@@ -25,7 +25,7 @@ import heapq
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple
 from dataclasses import dataclass
-from benchmarks.scheduling_benchmark_runs import run_scheduling_benchmark_suite
+from benchmarks.sliding_window_benchmark_runs import run_sliding_window_benchmark_suite
 
 
 # # hyperparameters
@@ -141,11 +141,12 @@ class Request:
 
 
 class Scheduler:
-    def __init__(self, policy='fcfs', max_batch_size=4, token_budget=16, max_kv_tokens=22):
+    def __init__(self, policy='fcfs', max_batch_size=4, token_budget=16, max_kv_tokens=22, sliding_window=None):
         self.policy = policy
         self.max_batch_size = max_batch_size
         self.token_budget = token_budget
         self.max_kv_tokens = max_kv_tokens
+        self.sliding_window = sliding_window
 
         self.waiting = []
         self.prefilling = []
@@ -176,6 +177,13 @@ class Scheduler:
 
     def is_done(self):
         return not (self.waiting or self.prefilling or self.active)
+
+    def _effective_kv_tokens(self, req):
+        """How many KV entries this request actually holds (after eviction)."""
+        total = len(req.prompt_tokens) + req.num_generated
+        if self.sliding_window is not None:
+            return min(total, self.sliding_window)
+        return total
     
     def maybe_admit(self, step):
         if self.prefilling or not self.waiting:
@@ -185,7 +193,7 @@ class Scheduler:
             return
         
         candidate = self.waiting[0][-1]
-        kv_tokens_used = sum(len(req.prompt_tokens) + req.num_generated for req in self.active)
+        kv_tokens_used = sum(self._effective_kv_tokens(req) for req in self.active)
 
         if kv_tokens_used + len(candidate.prompt_tokens) > self.max_kv_tokens:
             return
@@ -196,11 +204,11 @@ class Scheduler:
         self.prefilling.append(candidate)
 
     def maybe_preempt(self):
-        kv_tokens_used = sum(len(req.prompt_tokens) + req.num_generated for req in self.active)
+        kv_tokens_used = sum(self._effective_kv_tokens(req) for req in self.active)
 
         while self.active and kv_tokens_used > self.max_kv_tokens:
             victim = max(self.active, key=lambda r: (r.priority, -r.arrival_time))
-            kv_tokens_used -= (len(victim.prompt_tokens) + victim.num_generated)
+            kv_tokens_used -= self._effective_kv_tokens(victim)
             
             self.active.remove(victim)
             victim.clear_cache()
@@ -454,24 +462,6 @@ for iter in range(max_iters):
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
 print(decode(m.generate(context, max_new_tokens=200)[0].tolist()))
 
-def evict_kv_cache(request, window_size):
-    """
-    Trim the request's KV cache to keep only the last `window_size` entries.
-    
-    Before: kv_cache[(layer, head)] = (k, v) with shape (1, T, hs)
-    After:  kv_cache[(layer, head)] = (k, v) with shape (1, min(T, W), hs)
-    """
-    if window_size is None:
-        return  # no window configured
-
-    for (layer, head), (k, v) in request.kv_cache.items():
-        T = k.shape[1]
-        if T > window_size:
-            request.kv_cache[(layer, head)] = (
-                k[:, -window_size:, :],   # keep the LAST W entries
-                v[:, -window_size:, :],
-            )
-
 def assemble_batch_cache(requests: list[Request]):
     """
     Gather per-request KV caches into batched tensors.
@@ -522,6 +512,24 @@ def assemble_batch_cache(requests: list[Request]):
     
     return past_kvs, attn_mask, pad_lengths
 
+def evict_kv_cache(request, window_size):
+    """
+    Trim the request's KV cache to keep only the last `window_size` entries.
+    
+    Before: kv_cache[(layer, head)] = (k, v) with shape (1, T, hs)
+    After:  kv_cache[(layer, head)] = (k, v) with shape (1, min(T, W), hs)
+    """
+    if window_size is None:
+        return  # no window configured
+
+    for (layer, head), (k, v) in request.kv_cache.items():
+        T = k.shape[1]
+        if T > window_size:
+            request.kv_cache[(layer, head)] = (
+                k[:, -window_size:, :],   # keep the LAST W entries
+                v[:, -window_size:, :],
+            )
+
 def disassemble_batch_cache(requests, new_kvs, pad_lengths):
     for layer_idx, block_kv in enumerate(new_kvs):
         for head_idx, (batched_k, batched_v) in enumerate(block_kv):
@@ -539,7 +547,7 @@ def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_t
         add all requests to scheduler
 
     """
-    scheduler = Scheduler(policy, token_budget, max_kv_tokens)
+    scheduler = Scheduler(policy, token_budget, max_kv_tokens, sliding_window=20)
     
     step = 0
 
@@ -620,6 +628,11 @@ def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_t
 
                 disassemble_batch_cache(scheduler.active, new_kvs, pad_lengths)
 
+                # NEW: trim KV caches to sliding window size
+                if scheduler.sliding_window is not None:
+                    for req in scheduler.active:
+                        evict_kv_cache(req, scheduler.sliding_window)
+
                 for i, req in enumerate(scheduler.active):
                     req.generated_tokens.append(idx_next[i].item())
                     req._last_token = idx_next[i : i + 1]
@@ -633,7 +646,7 @@ def scheduled_generate(model, requests, policy="fcfs", token_budget=16, max_kv_t
     
         return scheduler
     
-run_scheduling_benchmark_suite(
+run_sliding_window_benchmark_suite(
     m,
     vocab_size=vocab_size,
     device=device,
