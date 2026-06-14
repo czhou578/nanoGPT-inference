@@ -1,0 +1,63 @@
+0.056769 M parameters
+step 0: train loss 4.1800, val loss 4.1791
+step 20: train loss 3.6074, val loss 3.6479
+step 40: train loss 3.3261, val loss 3.3321
+step 60: train loss 3.1051, val loss 3.1305
+step 80: train loss 2.9561, val loss 2.9651
+step 100: train loss 2.8321, val loss 2.8684
+step 119: train loss 2.7762, val loss 2.7998
+
+?
+C;xbek bridcowi,en OLOT,ertK
+
+: set bobeou etaSGgO-3 m meagatauhs ar hthhe uwqor he.tbar dXENSoate awice m he,fnsdacomzoroun
+Yowh$
+Mtof is h bot mil ndilin,
+eg ireeusen cin latiHetidrov ts, anenWk p
+
+============================================================
+  Sliding Window KV Eviction — Benchmark Suite
+============================================================
+block_size=64, device=cuda
+
+
+--- Benchmark 1: Memory Savings (window=20 vs full cache) ---
+config     | reqs | done | gen_tok | wall_s | tok/s | preempt | avg_peak_kv | max_peak_kv | max_total_kv | avg_batch | max_batch
+-----------+------+------+---------+--------+-------+---------+-------------+-------------+--------------+-----------+----------
+full_cache | 3    | 3    | 90      | 0.1713 | 525.3 | 0       | 36.3        | 37          | 103          | 2.81      | 3        
+window=20  | 3    | 3    | 90      | 0.1456 | 618.1 | 0       | 20.0        | 20          | 60           | 2.81      | 3        
+
+Peak KV reduction: 45.9%
+
+
+--- Benchmark 2: Preemption Reduction Under Tight Memory ---
+config     | reqs | done | gen_tok | wall_s | tok/s | preempt | avg_peak_kv | max_peak_kv | max_total_kv | avg_batch | max_batch
+-----------+------+------+---------+--------+-------+---------+-------------+-------------+--------------+-----------+----------
+full_cache | 5    | 5    | 80      | 0.1706 | 468.9 | 0       | 21.8        | 27          | 64           | 2.21      | 3        
+window=20  | 5    | 5    | 80      | 0.1580 | 506.3 | 0       | 19.0        | 20          | 59           | 2.42      | 3        
+
+Peak KV reduction: 25.9%
+
+
+--- Benchmark 3: Quality vs Window Size (max_new=40) ---
+
+  window |  agreement | gen_tokens
+--------------------------------------
+       8 |      97.5% |         40
+      16 |     100.0% |         40
+      32 |     100.0% |         40
+      48 |     100.0% |         40
+    full |     100.0% |         40  (baseline)
+
+
+--- Benchmark 4: Batch Capacity (window=16 vs full cache) ---
+config     | reqs | done | gen_tok | wall_s | tok/s | preempt | avg_peak_kv | max_peak_kv | max_total_kv | avg_batch | max_batch
+-----------+------+------+---------+--------+-------+---------+-------------+-------------+--------------+-----------+----------
+full_cache | 8    | 8    | 160     | 0.2074 | 771.4 | 0       | 25.0        | 25          | 164          | 5.85      | 8        
+window=16  | 8    | 8    | 160     | 0.1721 | 929.8 | 0       | 16.0        | 16          | 128          | 5.85      | 8        
+
+Peak KV reduction: 36.0%
+
+============================================================
+  Benchmark suite complete.
+============================================================
