@@ -1,0 +1,153 @@
+0.056769 M parameters
+step 0: train loss 4.1800, val loss 4.1791
+step 20: train loss 3.6074, val loss 3.6479
+step 40: train loss 3.3261, val loss 3.3321
+step 60: train loss 3.1050, val loss 3.1303
+step 80: train loss 2.9563, val loss 2.9647
+step 100: train loss 2.8325, val loss 2.8686
+step 119: train loss 2.7761, val loss 2.7999
+
+XJad, f zotg pyreds hosn avtfZISp.Tit iuominerl O? umr,n nu, d be e ths meth m ppan ;
+Siinowame nf,of,om sHodngthetouc $ smad
+Xadr :! .
+xeaweN
+IB bes,inlon'orakintcth, rOQWhrQd Toke ,s he lnFe j usene
+
+=== Disaggregated Prefill Benchmark Suite ===
+block_size=64, device=cpu
+
+
+=== smoke_test ===
+{'num_requests': 4, 'prompt_len': 16, 'max_new_tokens': 8, 'max_batch_size': 4, 'token_budget': 16, 'max_kv_tokens': 256}
+method        | reqs | done | prompt_tok | gen_tok | wall_s | gen_tok/s | prompt_tok/s | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms
+--------------+------+------+------------+---------+--------+-----------+--------------+-------------+-------------+------------+-----------
+monolithic    | 4    | 4    | 64         | 32      | 0.0358 | 894.04    | 1788.08      | 11.32       | 21.78       | 30.34      | 35.79     
+disaggregated | 4    | 4    | 64         | 32      | 0.0599 | 533.82    | 1067.65      | 10.11       | 10.14       | 29.01      | 29.01     
+
+Disaggregated throughput ratio: 0.60x
+Average TTFT ratio (lower is better): 0.89x
+Average latency ratio: 0.96x
+
+  ⚠ Req 0: token mismatch (expected with different RNG consumption)
+  ⚠ Req 1: token mismatch (expected with different RNG consumption)
+  ⚠ Req 2: token mismatch (expected with different RNG consumption)
+  ⚠ Req 3: token mismatch (expected with different RNG consumption)
+  ℹ Token differences are expected — monolithic and disaggregated consume RNG differently due to batching order
+
+
+=== staggered_arrivals ===
+{'num_requests': 8, 'prompt_len': 24, 'max_new_tokens': 10, 'max_batch_size': 4, 'token_budget': 16, 'max_kv_tokens': 512}
+method        | reqs | done | prompt_tok | gen_tok | wall_s | gen_tok/s | prompt_tok/s | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms
+--------------+------+------+------------+---------+--------+-----------+--------------+-------------+-------------+------------+-----------
+monolithic    | 8    | 8    | 192        | 80      | 0.1032 | 775.45    | 1861.09      | 49.68       | 84.67       | 81.97      | 103.17    
+disaggregated | 8    | 8    | 192        | 80      | 0.0725 | 1102.99   | 2647.18      | 23.17       | 36.20       | 46.37      | 56.57     
+
+Disaggregated throughput ratio: 1.42x
+Average TTFT ratio (lower is better): 0.47x
+Average latency ratio: 0.57x
+
+  ⚠ Req 0: token mismatch (expected with different RNG consumption)
+  ⚠ Req 1: token mismatch (expected with different RNG consumption)
+  ⚠ Req 2: token mismatch (expected with different RNG consumption)
+  ⚠ Req 3: token mismatch (expected with different RNG consumption)
+  ⚠ Req 4: token mismatch (expected with different RNG consumption)
+  ⚠ Req 5: token mismatch (expected with different RNG consumption)
+  ⚠ Req 6: token mismatch (expected with different RNG consumption)
+  ⚠ Req 7: token mismatch (expected with different RNG consumption)
+  ℹ Token differences are expected — monolithic and disaggregated consume RNG differently due to batching order
+
+
+=== batch_pressure ===
+{'num_requests': 12, 'prompt_len': 16, 'max_new_tokens': 8, 'max_batch_size': 2, 'token_budget': 12, 'max_kv_tokens': 256}
+method        | reqs | done | prompt_tok | gen_tok | wall_s | gen_tok/s | prompt_tok/s | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms
+--------------+------+------+------------+---------+--------+-----------+--------------+-------------+-------------+------------+-----------
+monolithic    | 12   | 12   | 192        | 96      | 0.1332 | 720.77    | 1441.54      | 63.96       | 113.70      | 80.52      | 130.03    
+disaggregated | 12   | 12   | 192        | 96      | 0.1360 | 705.70    | 1411.40      | 53.38       | 88.22       | 68.47      | 101.24    
+
+Disaggregated throughput ratio: 0.98x
+Average TTFT ratio (lower is better): 0.83x
+Average latency ratio: 0.85x
+
+  ⚠ Req 0: token mismatch (expected with different RNG consumption)
+  ⚠ Req 1: token mismatch (expected with different RNG consumption)
+  ⚠ Req 2: token mismatch (expected with different RNG consumption)
+  ⚠ Req 3: token mismatch (expected with different RNG consumption)
+  ⚠ Req 4: token mismatch (expected with different RNG consumption)
+  ⚠ Req 5: token mismatch (expected with different RNG consumption)
+  ⚠ Req 6: token mismatch (expected with different RNG consumption)
+  ⚠ Req 7: token mismatch (expected with different RNG consumption)
+  ⚠ Req 8: token mismatch (expected with different RNG consumption)
+  ⚠ Req 9: token mismatch (expected with different RNG consumption)
+  ⚠ Req 10: token mismatch (expected with different RNG consumption)
+  ⚠ Req 11: token mismatch (expected with different RNG consumption)
+  ℹ Token differences are expected — monolithic and disaggregated consume RNG differently due to batching order
+
+
+=== long_prompts ===
+{'num_requests': 6, 'prompt_len': 40, 'max_new_tokens': 8, 'max_batch_size': 4, 'token_budget': 24, 'max_kv_tokens': 512}
+method        | reqs | done | prompt_tok | gen_tok | wall_s | gen_tok/s | prompt_tok/s | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms
+--------------+------+------+------------+---------+--------+-----------+--------------+-------------+-------------+------------+-----------
+monolithic    | 6    | 6    | 240        | 48      | 0.1083 | 443.38    | 2216.91      | 64.22       | 94.58       | 96.99      | 108.26    
+disaggregated | 6    | 6    | 240        | 48      | 0.0670 | 716.46    | 3582.31      | 16.61       | 29.60       | 34.38      | 43.98     
+
+Disaggregated throughput ratio: 1.62x
+Average TTFT ratio (lower is better): 0.26x
+Average latency ratio: 0.35x
+
+  ⚠ Req 0: token mismatch (expected with different RNG consumption)
+  ⚠ Req 1: token mismatch (expected with different RNG consumption)
+  ⚠ Req 2: token mismatch (expected with different RNG consumption)
+  ⚠ Req 3: token mismatch (expected with different RNG consumption)
+  ⚠ Req 4: token mismatch (expected with different RNG consumption)
+  ⚠ Req 5: token mismatch (expected with different RNG consumption)
+  ℹ Token differences are expected — monolithic and disaggregated consume RNG differently due to batching order
+
+
+=== long_decode ===
+{'num_requests': 6, 'prompt_len': 16, 'max_new_tokens': 32, 'max_batch_size': 4, 'token_budget': 16, 'max_kv_tokens': 512}
+method        | reqs | done | prompt_tok | gen_tok | wall_s | gen_tok/s | prompt_tok/s | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms
+--------------+------+------+------------+---------+--------+-----------+--------------+-------------+-------------+------------+-----------
+monolithic    | 6    | 6    | 96         | 192     | 0.1866 | 1029.04   | 514.52       | 60.87       | 126.56      | 144.41     | 186.59    
+disaggregated | 6    | 6    | 96         | 192     | 0.1650 | 1163.56   | 581.78       | 33.47       | 79.41       | 98.77      | 137.52    
+
+Disaggregated throughput ratio: 1.13x
+Average TTFT ratio (lower is better): 0.55x
+Average latency ratio: 0.68x
+
+  ⚠ Req 0: token mismatch (expected with different RNG consumption)
+  ⚠ Req 1: token mismatch (expected with different RNG consumption)
+  ⚠ Req 2: token mismatch (expected with different RNG consumption)
+  ⚠ Req 3: token mismatch (expected with different RNG consumption)
+  ⚠ Req 4: token mismatch (expected with different RNG consumption)
+  ⚠ Req 5: token mismatch (expected with different RNG consumption)
+  ℹ Token differences are expected — monolithic and disaggregated consume RNG differently due to batching order
+
+
+=== stress_test ===
+{'num_requests': 16, 'prompt_len': 16, 'max_new_tokens': 10, 'max_batch_size': 4, 'token_budget': 16, 'max_kv_tokens': 512}
+method        | reqs | done | prompt_tok | gen_tok | wall_s | gen_tok/s | prompt_tok/s | avg_ttft_ms | p95_ttft_ms | avg_lat_ms | p95_lat_ms
+--------------+------+------+------------+---------+--------+-----------+--------------+-------------+-------------+------------+-----------
+monolithic    | 16   | 16   | 256        | 160     | 0.1561 | 1024.75   | 1639.59      | 72.62       | 130.12      | 101.51     | 152.97    
+disaggregated | 16   | 16   | 256        | 160     | 0.1497 | 1068.95   | 1710.32      | 52.81       | 87.27       | 77.22      | 108.00    
+
+Disaggregated throughput ratio: 1.04x
+Average TTFT ratio (lower is better): 0.73x
+Average latency ratio: 0.76x
+
+  ⚠ Req 0: token mismatch (expected with different RNG consumption)
+  ⚠ Req 1: token mismatch (expected with different RNG consumption)
+  ⚠ Req 2: token mismatch (expected with different RNG consumption)
+  ⚠ Req 3: token mismatch (expected with different RNG consumption)
+  ⚠ Req 4: token mismatch (expected with different RNG consumption)
+  ⚠ Req 5: token mismatch (expected with different RNG consumption)
+  ⚠ Req 6: token mismatch (expected with different RNG consumption)
+  ⚠ Req 7: token mismatch (expected with different RNG consumption)
+  ⚠ Req 8: token mismatch (expected with different RNG consumption)
+  ⚠ Req 9: token mismatch (expected with different RNG consumption)
+  ⚠ Req 10: token mismatch (expected with different RNG consumption)
+  ⚠ Req 11: token mismatch (expected with different RNG consumption)
+  ⚠ Req 12: token mismatch (expected with different RNG consumption)
+  ⚠ Req 13: token mismatch (expected with different RNG consumption)
+  ⚠ Req 14: token mismatch (expected with different RNG consumption)
+  ⚠ Req 15: token mismatch (expected with different RNG consumption)
+  ℹ Token differences are expected — monolithic and disaggregated consume RNG differently due to batching order
