@@ -104,6 +104,9 @@ def clear_kv_cache(model):
             module.value_cache = None
 
 class CausalSelfAttention(nn.Module):
+    """
+    Implement self-attention with fused QKV projection and KV cache.
+    """
     def __init__(self, num_heads, head_size):
         super().__init__()  
         self.qkv = nn.Linear(n_embd, 3 * n_embd, bias=False)
@@ -124,6 +127,7 @@ class CausalSelfAttention(nn.Module):
         k = k.view(B, T, self.num_heads, self.head_size).transpose(1, 2)
         v = v.view(B, T, self.num_heads, self.head_size).transpose(1, 2)
 
+        # can also use F.scaled_dot_product_attention here
         if not self.training:
             if self.key_cache is not None:
                 self.key_cache   = torch.cat([self.key_cache, k], dim=2)   # dim=2 is T now
