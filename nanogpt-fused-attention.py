@@ -104,6 +104,47 @@ def clear_kv_cache(model):
             module.key_cache = None
             module.value_cache = None
 
+class CausalSelfAttention(nn.Module):
+    def __init__(self, num_heads, head_size):
+        super().__init__()  
+        self.qkv = nn.Linear(n_embd, 3 * n_embd, bias=False)
+        self.attn_proj = nn.Linear(n_embd, n_embd)
+        self.num_heads = num_heads
+        self.head_size = head_size
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+
+    def forward(self, x):
+        B, T, C = x.shape
+        qkv = self.qkv(x) # (B, T, 3 * n_embd)
+        q, k, v = qkv.split(n_embd, dim=2) # (B, T, n_embd)
+        # reshape to (B, T, head_size)
+        q = q.view(B, T, self.num_heads, self.head_size).transpose(1, 2)
+        k = k.view(B, T, self.num_heads, self.head_size).transpose(1, 2)
+        v = v.view(B, T, self.num_heads, self.head_size).transpose(1, 2)
+
+        if not self.training:
+            if self.key_cache is not None:
+                self.key_cache   = torch.cat([self.key_cache, k], dim=2)   # dim=2 is T now
+                self.value_cache = torch.cat([self.value_cache, v], dim=2)
+            else:
+                self.key_cache, self.value_cache = k, v
+
+            scale = self.head_size ** -0.5
+            attn = (q @ self.key_cache.transpose(-2, -1)) * scale  # (B, n_head, T_q, T_cache)
+            attn = F.softmax(attn, dim=-1)
+            out  = attn @ self.value_cache  # (B, n_head, T_q, head_size)
+        else:
+            scale = self.head_size ** -0.5
+            attn = (q @ k.transpose(-2, -1)) * scale  # (B, n_head, T, T)
+            attn = attn.masked_fill(self.tril[:T, :T] == 0, float('-inf'))  # ← missing
+            attn = F.softmax(attn, dim=-1)
+            out  = attn @ v
+
+        out = out.transpose(1, 2).contiguous().view(B, T, C)  # (B, T, n_embd)
+        out = self.attn_proj(out)
+        return out   
+            
+
 class Head(nn.Module):
     """ one head of self-attention """
 
