@@ -21,12 +21,11 @@ Run:
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-import time
 from benchmarks.kv_cache_baseline_benchmark_runs import (
     run_kv_cache_baseline_benchmark_suite,
 )
 
-# # hyperparameters
+# hyperparameters
 # batch_size = 64 # how many independent sequences will we process in parallel?
 # block_size = 256 # what is the maximum context length for predictions?
 # max_iters = 5000
@@ -44,8 +43,8 @@ from benchmarks.kv_cache_baseline_benchmark_runs import (
 
 batch_size = 8          # smaller training batches
 block_size = 64        # keep same for now so your benchmark assumptions hold
-max_iters = 120         # much faster than 5000
-eval_interval = 20
+max_iters = 1000         # much faster than 5000
+eval_interval = 200
 learning_rate = 1e-3
 device = 'cpu'          # force CPU
 eval_iters = 10         # much faster validation
@@ -100,7 +99,7 @@ def estimate_loss(): #evaluates average loss over multiple batches
 
 def clear_kv_cache(model):
     for module in model.modules():
-        if isinstance(module, Head):
+        if isinstance(module, CausalSelfAttention):
             module.key_cache = None
             module.value_cache = None
 
@@ -112,6 +111,9 @@ class CausalSelfAttention(nn.Module):
         self.num_heads = num_heads
         self.head_size = head_size
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+
+        self.key_cache = None
+        self.value_cache = None
 
     def forward(self, x):
         B, T, C = x.shape
@@ -143,69 +145,6 @@ class CausalSelfAttention(nn.Module):
         out = out.transpose(1, 2).contiguous().view(B, T, C)  # (B, T, n_embd)
         out = self.attn_proj(out)
         return out   
-            
-
-class Head(nn.Module):
-    """ one head of self-attention """
-
-    def __init__(self, head_size):
-        super().__init__()
-        self.key = nn.Linear(n_embd, head_size, bias=False)
-        self.query = nn.Linear(n_embd, head_size, bias=False)
-        self.value = nn.Linear(n_embd, head_size, bias=False)
-        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
-        
-        self.key_cache = None
-        self.value_cache = None
-
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        # input of size (batch, time-step, channels)
-        # output of size (batch, time-step, head size)
-        B,T,C = x.shape
-        k = self.key(x)   # (B,T,hs)
-        q = self.query(x) # (B,T,hs)
-        v = self.value(x) # (B,T,hs)
-
-        if not self.training:
-            if self.key_cache is not None:
-                self.key_cache = torch.cat([self.key_cache, k], dim=-2)
-                self.value_cache = torch.cat([self.value_cache, v], dim=-2)
-            else:
-                self.key_cache = k
-                self.value_cache = v
-            
-            wei = q @ self.key_cache.transpose(-2, -1) * (self.key_cache.shape[-1] ** -0.5)
-            wei = F.softmax(wei, dim=-1)
-            wei = self.dropout(wei)
-            out = wei @ self.value_cache
-
-            return out 
-
-        else:
-            # compute attention scores ("affinities")
-            wei = q @ k.transpose(-2,-1) * k.shape[-1]**-0.5 # (B, T, hs) @ (B, hs, T) -> (B, T, T)
-            wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
-            wei = F.softmax(wei, dim=-1) # (B, T, T)
-            wei = self.dropout(wei)
-            # perform the weighted aggregation of the values
-            out = wei @ v # (B, T, T) @ (B, T, hs) -> (B, T, hs)
-        return out
-
-class MultiHeadAttention(nn.Module):
-    """ multiple heads of self-attention in parallel """
-
-    def __init__(self, num_heads, head_size):
-        super().__init__()
-        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
-        self.proj = nn.Linear(head_size * num_heads, n_embd)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        out = torch.cat([h(x) for h in self.heads], dim=-1)
-        out = self.dropout(self.proj(out))
-        return out
 
 class FeedFoward(nn.Module):
     """ a simple linear layer followed by a non-linearity """
@@ -229,7 +168,7 @@ class Block(nn.Module):
         # n_embd: embedding dimension, n_head: the number of heads we'd like
         super().__init__()
         head_size = n_embd // n_head
-        self.sa = MultiHeadAttention(n_head, head_size)
+        self.sa = CausalSelfAttention(n_head, head_size)
         self.ffwd = FeedFoward(n_embd)
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
@@ -381,9 +320,9 @@ def generate_with_cache(model, idx, max_new_tokens):
             idx = torch.cat((idx, idx_next), dim=1)
     return idx
     
-run_kv_cache_baseline_benchmark_suite(
-    m,
-    train_data=train_data,
-    device=device,
-    block_size=block_size,
-)
+# run_kv_cache_baseline_benchmark_suite(
+#     m,
+#     train_data=train_data,
+#     device=device,
+#     block_size=block_size,
+# )
