@@ -1,8 +1,8 @@
 # 🧠 NanoGPT Inference Engine — From First Principles
 
-A deep-dive systems project that **implements 12 production inference optimizations from scratch** on top of Andrej Karpathy's NanoGPT, each paired with automated benchmark suites and interactive browser-based visualizations. The goal is to demonstrate a first-principles understanding of how modern LLM inference engines (like vLLM and SGLang) work internally — not by reading about them, but by building each component by hand.
+A deep-dive systems project that **implements 16 production inference optimizations from scratch** on top of Andrej Karpathy's NanoGPT, each paired with automated benchmark suites and interactive browser-based visualizations. The goal is to demonstrate a first-principles understanding of how modern LLM inference engines (like vLLM and SGLang) work internally — not by reading about them, but by building each component by hand.
 
-> **TL;DR** — Trained a character-level GPT on Shakespeare, then progressively added KV caching, continuous batching, paged attention, chunked prefill, prefix caching, scheduling, speculative decoding, interleaved prefill-decode, INT8 quantization, radix tree prefix caching, and a streaming HTTP server. Every optimization is benchmarked for throughput and latency, the key concepts are visualized in a React-based interactive simulation frontend, and the implementations are compared side-by-side against vLLM and SGLang production code.
+> **TL;DR** — Trained a character-level GPT on Shakespeare, then progressively added KV caching, continuous batching, paged attention, chunked prefill, prefix caching, scheduling, speculative decoding, interleaved prefill-decode, INT8 quantization, radix tree prefix caching, a streaming HTTP server, fused attention, sliding window KV eviction, disaggregated prefill/decode, and CUDA graph acceleration. Every optimization is benchmarked for throughput and latency, the key concepts are visualized in a React-based interactive simulation frontend, and the implementations are compared side-by-side against vLLM and SGLang production code.
 
 ---
 
@@ -23,6 +23,10 @@ graph LR
     I --> J["Quantization"]
     J --> K["Radix Tree"]
     K --> L["Streaming\nServer"]
+    L --> M["Fused\nAttention"]
+    M --> N["Sliding\nWindow"]
+    N --> O["Disaggregated\nPrefill/Decode"]
+    O --> P["CUDA\nGraphs"]
 ```
 
 ### Repository Structure
@@ -45,12 +49,19 @@ graph LR
 │  nanogpt-quantize.py           ← + Dynamic & Static INT8 quantization│
 │  nanogpt-radix-tree.py         ← + RadixAttention prefix caching     │
 │  server.py                     ← + Streaming HTTP server (FastAPI)   │
+│  nanogpt-fused-attention.py    ← + Fused QKV + scaled dot product    │
+│  nanogpt-sliding-window.py     ← + Sliding window KV cache eviction  │
+│  nanogpt-disaggregated-prefill.py ← + Disaggregated prefill/decode   │
+│  nanogpt-cuda-graph.py         ← + CUDA graph capture & replay       │
 │                                                                       │
-│  benchmarks/                   ← Automated benchmark suites (25 files)│
-│  results/                      ← Raw benchmark output (11 files)     │
+│  benchmarks/                   ← Automated benchmark suites (31 files)│
+│  tests/                        ← Correctness & equivalence tests     │
+│  results/                      ← Raw benchmark output (12 files)     │
 │  notes/                        ← 30+ research notes & writeups       │
 │  nanogpt-notebooks/            ← Jupyter notebooks for exploration   │
 │  frontend/                     ← React + Vite interactive visualizer │
+│  sglang/                       ← SGLang source (submodule)           │
+│  vllm/                         ← vLLM source (submodule)             │
 │                                                                       │
 └───────────────────────────────────────────────────────────────────────┘
 ```
@@ -223,6 +234,63 @@ curl -N http://localhost:8000/v1/completions \
 
 ---
 
+### 13. Fused Attention — `nanogpt-fused-attention.py`
+**Problem:** Separate Q, K, V projections result in three independent matrix multiplications, missing opportunities for kernel fusion and memory bandwidth optimization.
+
+**Implementation:**
+- `CausalSelfAttention` with a single fused `nn.Linear(n_embd, 3 * n_embd)` QKV projection, replacing three separate linear layers
+- Split the fused output into Q, K, V with a single `tensor.split()` operation
+- Reshaped into multi-head format `(B, n_head, T, head_size)` for efficient batched attention
+- Compatible with `F.scaled_dot_product_attention` for additional hardware-accelerated fusion (Flash Attention when available)
+- KV cache integration maintains the same prefill/decode split pattern
+
+---
+
+### 14. Sliding Window KV Cache Eviction — `nanogpt-sliding-window.py`
+**Problem:** As sequences grow, the KV cache grows unboundedly, eventually exceeding GPU memory — especially problematic for long-running decode sessions.
+
+**Implementation:**
+- `evict_kv_cache(request, window_size)` — trims each request's KV cache to retain only the last `window_size` entries, discarding older context
+- Integrated into the `Scheduler` class with a configurable `sliding_window` parameter
+- `_effective_kv_tokens()` accounts for the window size when computing memory budgets for admission control
+- After each decode step, all active requests have their KV caches trimmed to the window size
+- Maintains full scheduling infrastructure (FCFS/Priority, preemption) on top of the windowed cache
+
+**Key insight:** This mirrors the sliding window attention used in production models like Mistral — trading exact long-range attention for bounded memory usage, enabling serving of arbitrarily long conversations.
+
+---
+
+### 15. Disaggregated Prefill/Decode — `nanogpt-disaggregated-prefill.py`
+**Problem:** Monolithic inference engines interleave prefill and decode on the same resources. Prefill is compute-bound while decode is memory-bandwidth-bound — running both on the same hardware wastes resources.
+
+**Implementation:**
+- **Two-worker architecture:** Separate `prefill_worker()` and `decode_worker()` threads, each with distinct execution characteristics
+- **KV cache transfer protocol:** `KVTransfer` dataclass packages the computed KV cache, first sampled token, and timing metadata for handoff between workers
+- **Thread-safe queues:** `request_queue` feeds the prefill worker, `kv_transfer_queue` bridges prefill → decode, and `results_queue` collects completed requests
+- **Prefill worker:** Runs full-prompt forward passes, computes KV caches, samples the first token, and transfers results to the decode worker
+- **Decode worker:** Receives pre-filled requests, runs batched autoregressive decode with continuous batching, and manages the active request pool
+- **Coordinated shutdown:** `threading.Event` signals both workers to stop cleanly after all requests complete
+
+**Benchmark result:** Up to **1.6× throughput** and **74% lower TTFT** on long-prompt workloads compared to monolithic inference.
+
+---
+
+### 16. CUDA Graph Acceleration — `nanogpt-cuda-graph.py`
+**Problem:** Each decode step launches dozens of small GPU kernels. The CPU-side overhead of dispatching each kernel (driver calls, synchronization) dominates the ~5μs of actual GPU compute per token.
+
+**Implementation:**
+- **Three-phase generation pipeline:**
+  1. **Prefill (eager)** — Variable-length prompt processed normally, populating KV cache
+  2. **Warmup + Capture** — A single decode step is first warmed up (to force all intermediate tensor allocations), then recorded as a `torch.cuda.CUDAGraph`
+  3. **Decode (graph replay)** — Each subsequent token replays the captured graph in ~5μs, running all kernels as a single GPU command
+- **Static buffer protocol:** `static_input_ids`, `static_position`, and `static_cache_pos` are pre-allocated tensors at fixed GPU addresses. Before each replay, values are written via `.copy_()` / `.fill_()` — the graph reads from these exact addresses
+- **Graph-safe `decode_cached()`** — A separate attention path that avoids all graph-breaking operations: no `torch.arange`, no Python `if/else`, no dynamic shapes. Uses `index_copy_()` for KV cache writes and a pre-registered `kv_indices` buffer for masking
+- **`decode_one_token()`** — A parameter-free method that reads entirely from static buffers, ensuring the entire decode computation has fixed tensor addresses
+
+**Key insight:** CUDA graphs eliminate CPU-GPU launch overhead by recording a sequence of GPU operations once, then replaying the entire sequence as a single command. The constraint is that all tensor addresses must be static — which requires careful separation of "what changes" (values via `.copy_()`) from "what stays fixed" (tensor addresses).
+
+---
+
 ## 📊 Benchmark Suites
 
 Every optimization includes an automated benchmark harness in `benchmarks/` that measures:
@@ -248,6 +316,9 @@ Every optimization includes an automated benchmark harness in `benchmarks/` that
 | Speculative Decoding (Bigram) | `speculative_decoding_benchmark_runs.py` | Acceptance rates, K-value sweep |
 | Speculative Decoding (Trigram) | `trigram_speculative_decoding_benchmark_runs.py` | Trigram vs. bigram acceptance rates |
 | Simulation Traces | `simulation_benchmark_runs.py` | End-to-end request simulation |
+| Sliding Window | `sliding_window_benchmark_runs.py` | Window size sweep, memory savings vs. quality |
+| Disaggregated Prefill | `disaggregated_prefill_benchmark_runs.py` | Monolithic vs. disaggregated throughput, TTFT, latency |
+| CUDA Graphs | `cuda_graph_benchmark_runs.py` | Eager vs. graph-captured decode throughput |
 
 All raw results are stored in `results/` with detailed per-scenario breakdowns.
 
@@ -276,7 +347,7 @@ A React + Vite web application that provides interactive, step-by-step visualiza
 ### Tech Stack
 
 | Layer | Technology |
-|-------|-----------|
+|-------|-----------| 
 | Framework | React 18 |
 | Build Tool | Vite 8 |
 | Routing | React Router v7 |
@@ -293,6 +364,8 @@ Side-by-side comparisons between the NanoGPT implementations and production infe
 
 - **[vLLM Comparison](notes/vllm-comparison.md)** — Block management (reference counting, intrusive linked lists, eager hashing), scheduler architecture (unified `num_computed_tokens` model, running-first scheduling, demand-driven preemption), and memory ownership patterns
 - **[SGLang Comparison](notes/sglang-comparison.md)** — Radix tree design (KV indices vs. tensor data, `RadixKey` with exponential-search matching, fine-grained leaf-first eviction, host ↔ device tiering)
+
+Both vLLM and SGLang source repositories are included as git submodules for reference.
 
 ---
 
@@ -323,6 +396,7 @@ Detailed analysis reports for each benchmark suite, including methodology, resul
 
 - **Python 3** + **PyTorch** — All model implementations and inference loops
 - **torch.ao.quantization** — INT8 dynamic and static quantization
+- **torch.cuda.CUDAGraph** — Graph capture and replay for decode acceleration
 - Character-level tokenization on Tiny Shakespeare (~1.1M characters)
 
 ### Frontend (Visualizer)
@@ -338,6 +412,7 @@ Detailed analysis reports for each benchmark suite, including methodology, resul
 ### Prerequisites
 - Python 3.10+
 - PyTorch 2.0+
+- CUDA-capable GPU (required for CUDA graph and sliding window implementations)
 - Node.js 18+ (for the frontend)
 
 ### Installation
@@ -361,6 +436,15 @@ python nanogpt-trigram-spec-decode.py
 
 # Example: Run the radix tree implementation
 python nanogpt-radix-tree.py
+
+# Example: Run CUDA graph accelerated generation
+python nanogpt-cuda-graph.py
+
+# Example: Run disaggregated prefill/decode
+python nanogpt-disaggregated-prefill.py
+
+# Example: Run sliding window KV cache eviction
+python nanogpt-sliding-window.py
 ```
 
 ### Running the Streaming Server
@@ -383,6 +467,16 @@ npm run dev
 
 Navigate to `http://localhost:5173` to explore the interactive simulations and knowledge base.
 
+### Running Tests
+
+```bash
+# Run fused attention equivalence tests
+python -m pytest tests/
+
+# Run correctness equivalence across all implementations
+python benchmarks/test_correctness_equivalence.py
+```
+
 ---
 
 ## 📁 Repository Structure
@@ -402,8 +496,13 @@ Navigate to `http://localhost:5173` to explore the interactive simulations and k
 ├── nanogpt-quantize.py               # Dynamic + static INT8 quantization
 ├── nanogpt-radix-tree.py             # RadixAttention prefix caching
 ├── server.py                          # Streaming FastAPI server
+├── nanogpt-fused-attention.py         # Fused QKV + scaled dot product attention
+├── nanogpt-sliding-window.py          # Sliding window KV cache eviction
+├── nanogpt-disaggregated-prefill.py   # Disaggregated prefill/decode workers
+├── nanogpt-cuda-graph.py             # CUDA graph capture & replay
 ├── input.txt                          # Tiny Shakespeare training data
 ├── requirements.txt                   # Python dependencies
+├── pyproject.toml                     # Project configuration
 │
 ├── benchmarks/                        # Automated benchmark suites
 │   ├── kv_cache_baseline_benchmark_runs.py
@@ -417,14 +516,21 @@ Navigate to `http://localhost:5173` to explore the interactive simulations and k
 │   ├── trigram_speculative_decoding_benchmark_runs.py
 │   ├── radix_tree_benchmark_runs.py
 │   ├── simulation_benchmark_runs.py
+│   ├── sliding_window_benchmark_runs.py
+│   ├── disaggregated_prefill_benchmark_runs.py
+│   ├── cuda_graph_benchmark_runs.py
 │   ├── test_correctness_equivalence.py
 │   └── ... (benchmark implementations + plots)
+│
+├── tests/                             # Test suites
+│   └── test_fused_equivalence.py      # Fused attention correctness tests
 │
 ├── results/                           # Raw benchmark output
 │   ├── kv_cache_results.txt
 │   ├── continuous_batching_results.txt
 │   ├── paged_attention_results.txt
-│   └── ... (11 result files)
+│   ├── sliding_window_kv_cache_results.txt
+│   └── ... (12 result files)
 │
 ├── nanogpt-notebooks/                 # Jupyter notebooks for exploration
 │   ├── nanogpt-kv-cache.ipynb
@@ -438,6 +544,9 @@ Navigate to `http://localhost:5173` to explore the interactive simulations and k
 │   ├── concepts/                      # 31 in-depth research articles
 │   ├── benchmark-writeups/            # 10 benchmark analysis reports
 │   └── plans/                         # Implementation planning documents
+│
+├── sglang/                            # SGLang source (git submodule)
+├── vllm/                              # vLLM source (git submodule)
 │
 └── frontend/                          # React + Vite interactive visualizer
     └── src/
