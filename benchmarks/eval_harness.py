@@ -5,7 +5,6 @@ Measures output quality metrics that are ORTHOGONAL to throughput benchmarks:
   - Perplexity on held-out validation data
   - Repetition ratio in generated text
   - N-gram diversity (distinct-2, distinct-3)
-  - Self-BLEU (intra-generation diversity)
   - Deterministic consistency (same seed → same output)
 
 All metrics run on CPU. No GPU required.
@@ -25,15 +24,12 @@ The generate_fn signature must be:
 import json
 import math
 import time
-from collections import Counter
+
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
 import torch
-import torch.nn.functional as F
-
 
 # ──────────────────────────────────────────────────────────────────────
 # Data classes
@@ -47,7 +43,7 @@ class EvalResult:
     repetition_ratio: float       # 0 = all unique, 1 = all repeated
     distinct_2: float             # distinct bigrams / total bigrams
     distinct_3: float             # distinct trigrams / total trigrams
-    self_bleu: float              # avg BLEU between pairs of generations
+
     consistency: float            # 1.0 = perfectly reproducible across seeds
     num_prompts: int
     num_tokens_generated: int
@@ -76,10 +72,10 @@ class EvalResult:
 class RegressionFlag:
     """A single regression signal."""
     metric: str
-    baseline_value: float
-    current_value: float
-    threshold_pct: float
-    delta_pct: float
+    baseline_value: float # The value from the baseline implementation 
+    current_value: float # The value from the implementation being tested right now
+    threshold_pct: float # How much % change is allowed before flagging 
+    delta_pct: float # Actual percent change between baseline and current
     is_regression: bool
     direction: str   # "higher_is_worse" or "lower_is_worse"
 
@@ -131,6 +127,10 @@ def compute_perplexity(
     model.eval()
     total_loss = 0.0
     count = 0
+
+    # Clamp window_size to block_size so we never exceed the model's
+    # positional embedding range.
+    window_size = min(window_size, block_size)
 
     torch.manual_seed(42)
     max_start = len(val_data) - window_size - 1
@@ -204,62 +204,6 @@ def compute_distinct_n(tokens: list[int], n: int) -> float:
         return 1.0
 
     return len(set(ngrams)) / len(ngrams)
-
-
-def compute_self_bleu(
-    generations: list[list[int]],
-    max_n: int = 4,
-) -> float:
-    """
-    Self-BLEU: average BLEU between every pair of generations.
-
-    Lower self-BLEU = more diverse outputs across different prompts/seeds.
-    Uses a simplified BLEU-N implementation (no brevity penalty).
-    """
-    if len(generations) < 2:
-        return 0.0
-
-    def _ngram_counts(tokens, n):
-        counts = Counter()
-        for i in range(len(tokens) - n + 1):
-            counts[tuple(tokens[i : i + n])] += 1
-        return counts
-
-    def _bleu_pair(hypothesis: list[int], reference: list[int]) -> float:
-        """Simplified BLEU between one hypothesis and one reference."""
-        if not hypothesis or not reference:
-            return 0.0
-
-        precisions = []
-        for n in range(1, max_n + 1):
-            if len(hypothesis) < n:
-                precisions.append(0.0)
-                continue
-
-            hyp_counts = _ngram_counts(hypothesis, n)
-            ref_counts = _ngram_counts(reference, n)
-
-            clipped = sum(
-                min(count, ref_counts.get(ngram, 0))
-                for ngram, count in hyp_counts.items()
-            )
-            total = sum(hyp_counts.values())
-
-            precisions.append(clipped / total if total > 0 else 0.0)
-
-        # Geometric mean of precisions (avoid log(0))
-        if any(p == 0 for p in precisions):
-            return 0.0
-        log_avg = sum(math.log(p) for p in precisions) / len(precisions)
-        return math.exp(log_avg)
-
-    scores = []
-    for i in range(len(generations)):
-        for j in range(i + 1, len(generations)):
-            scores.append(_bleu_pair(generations[i], generations[j]))
-
-    return sum(scores) / len(scores) if scores else 0.0
-
 
 def compute_consistency(
     generate_fn: Callable,
@@ -380,7 +324,7 @@ class EvalHarness:
         Generate from prompts and compute quality metrics.
 
         Returns dict with: repetition_ratio, distinct_2, distinct_3,
-        self_bleu, consistency, all_tokens, num_tokens_generated.
+        consistency, all_tokens, num_tokens_generated.
         """
         prompts = self._make_prompts(num_prompts, prompt_len)
 
@@ -419,7 +363,6 @@ class EvalHarness:
         repetition = compute_repetition_ratio(all_tokens_flat)
         distinct_2 = compute_distinct_n(all_tokens_flat, 2)
         distinct_3 = compute_distinct_n(all_tokens_flat, 3)
-        self_bleu = compute_self_bleu(all_generated)
 
         # Consistency: test with first prompt
         consistency = compute_consistency(
@@ -435,7 +378,6 @@ class EvalHarness:
             "repetition_ratio": repetition,
             "distinct_2": distinct_2,
             "distinct_3": distinct_3,
-            "self_bleu": self_bleu,
             "consistency": consistency,
             "all_tokens": all_generated,
             "num_tokens_generated": total_tokens,
@@ -484,7 +426,6 @@ class EvalHarness:
             repetition_ratio=quality["repetition_ratio"],
             distinct_2=quality["distinct_2"],
             distinct_3=quality["distinct_3"],
-            self_bleu=quality["self_bleu"],
             consistency=quality["consistency"],
             num_prompts=num_prompts,
             num_tokens_generated=quality["num_tokens_generated"],
@@ -592,7 +533,6 @@ def print_eval_result(result: EvalResult):
     print(f"  Repetition ratio: {result.repetition_ratio:>10.4f}")
     print(f"  Distinct-2:       {result.distinct_2:>10.4f}")
     print(f"  Distinct-3:       {result.distinct_3:>10.4f}")
-    print(f"  Self-BLEU:        {result.self_bleu:>10.4f}")
     print(f"  Consistency:      {result.consistency:>10.2f}")
     print(f"  Tokens generated: {result.num_tokens_generated:>10d}")
     print(f"  Eval time:        {result.eval_time_seconds:>10.2f}s")
@@ -630,7 +570,7 @@ def print_comparison_table(results: list[EvalResult]):
     print(f"  {'=' * 70}")
 
     headers = ["implementation", "ppl", "rep_ratio", "dist-2", "dist-3",
-               "self_bleu", "consist", "tokens", "time_s"]
+               "consist", "tokens", "time_s"]
     rows = []
     for r in results:
         rows.append([
@@ -639,7 +579,6 @@ def print_comparison_table(results: list[EvalResult]):
             f"{r.repetition_ratio:.4f}",
             f"{r.distinct_2:.4f}",
             f"{r.distinct_3:.4f}",
-            f"{r.self_bleu:.4f}",
             f"{r.consistency:.2f}",
             str(r.num_tokens_generated),
             f"{r.eval_time_seconds:.2f}",
