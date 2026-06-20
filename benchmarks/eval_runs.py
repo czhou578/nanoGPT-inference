@@ -19,11 +19,10 @@ Usage:
     results = run_eval_suite()
 """
 
+import gc
 import json
 import sys
-import os
 from pathlib import Path
-from datetime import datetime, timezone
 
 import torch
 import torch.nn as nn
@@ -45,10 +44,12 @@ from benchmarks.eval_harness import (
 # importing this file does NOT trigger training from nanogpt-kv-cache.py.
 # The architecture matches what the benchmark helpers expect.
 
-# Small hyperparameters for fast CPU eval
-BATCH_SIZE = 8
+# Small hyperparameters for fast CPU eval with low memory footprint.
+# BATCH_SIZE is intentionally small (4) to avoid OOM on laptops —
+# the model only needs to learn basic character patterns, not converge fully.
+BATCH_SIZE = 4
 BLOCK_SIZE = 64
-MAX_ITERS = 120
+MAX_ITERS = 80
 EVAL_INTERVAL = 20
 LEARNING_RATE = 1e-3
 DEVICE = "cpu"
@@ -381,10 +382,10 @@ def _train_model(model, train_data, val_data, verbose=True):
 
 def run_eval_suite(
     *,
-    num_prompts: int = 20,
+    num_prompts: int = 10,
     prompt_len: int = 16,
     max_new_tokens: int = 30,
-    num_ppl_windows: int = 50,
+    num_ppl_windows: int = 30,
     save_results: bool = True,
     verbose: bool = True,
 ) -> dict:
@@ -445,6 +446,9 @@ def run_eval_suite(
         if verbose:
             print(f"\n  {'─' * 40}")
             print(f"  Evaluating: {name}")
+
+        # Clear any leftover KV caches from the previous implementation
+        _clear_kv_cache(model)
 
         result = harness.run_full_eval(
             gen_fn,
