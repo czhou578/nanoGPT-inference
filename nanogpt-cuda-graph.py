@@ -368,6 +368,94 @@ def generate_kv_cache(model, idx, max_new_tokens):
     model.train()
     return idx
 
+def generate_cuda_graph(model, idx, max_new_tokens):
+    """
+    Generate tokens using CUDA graph replay for the decode loop.
+
+    Three phases:
+      1. Prefill  — eager mode (variable-length prompt, runs once)
+      2. Capture  — record one decode step as a CUDA graph
+      3. Decode   — replay the captured graph for each new token
+    """
+    model.eval()
+    clear_kv_cache(model)
+
+    T_prompt = idx.shape[1]
+
+    # ════════════════════════════════════════════════════════
+    # Phase 1: PREFILL (eager — not graph-captured)
+    # ════════════════════════════════════════════════════════
+    # Prefill has variable sequence length, so we run it normally.
+    # This populates KV cache slots 0..T_prompt-1.
+    logits, _ = model(idx, cache_pos=0)
+
+    # Sample the first decode token from prefill output
+    logits = logits[:, -1, :]
+    probs = F.softmax(logits, dim=-1)
+    idx_next = torch.multinomial(probs, num_samples=1)  # (1, 1)
+    idx = torch.cat((idx, idx_next), dim=1)
+
+    cache_pos = T_prompt  # the first decode token goes into this slot
+
+    # ════════════════════════════════════════════════════════
+    # Phase 2: WARMUP + CAPTURE
+    # ════════════════════════════════════════════════════════
+    # Step 2a: Load real values into static buffers for the warmup run
+    model.static_input_ids.copy_(idx_next)
+    model.static_position.fill_(cache_pos)
+    model.static_cache_pos.fill_(cache_pos)
+
+    # Step 2b: Warmup — run decode_one_token once WITHOUT capturing.
+    # This forces PyTorch to allocate all intermediate tensors.
+    # If allocations happen during capture, replay would try to
+    # re-allocate and crash.
+    s = torch.cuda.Stream()
+    s.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(s):
+        static_output = model.decode_one_token()
+    torch.cuda.current_stream().wait_stream(s)
+    torch.cuda.synchronize()
+
+    # Step 2c: Capture — record the decode step as a CUDA graph.
+    # Every kernel launch inside decode_one_token() is recorded.
+    # The graph remembers the exact tensor addresses it reads/writes.
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph, stream=s):
+        static_output = model.decode_one_token()
+
+    # static_output now lives at a fixed address. After each replay(),
+    # it contains the logits for whatever token was in static_input_ids.
+
+    cache_pos += 1  # warmup already wrote into cache_pos, advance
+
+    # ════════════════════════════════════════════════════════
+    # Phase 3: DECODE LOOP (graph replay)
+    # ════════════════════════════════════════════════════════
+    for _ in range(max_new_tokens - 1):  # -1 because we already sampled one token
+        # Step 3a: Load real values into static buffers
+        # The graph will read from these exact addresses on replay.
+        model.static_input_ids.copy_(idx_next)
+        model.static_position.fill_(cache_pos)
+        model.static_cache_pos.fill_(cache_pos)
+
+        # Step 3b: Replay the captured graph.
+        # This runs all ~50 kernels back-to-back in a single GPU command.
+        # No Python loop, no CPU-GPU sync per kernel. Cost: ~5μs.
+        graph.replay()
+
+        # Step 3c: Read logits from the static output tensor.
+        # static_output is the SAME tensor that was created during capture —
+        # replay() overwrote its contents with results for the new input.
+        logits = static_output[:, -1, :]
+        probs = F.softmax(logits, dim=-1)
+        idx_next = torch.multinomial(probs, num_samples=1)
+        idx = torch.cat((idx, idx_next), dim=1)
+
+        cache_pos += 1
+
+    model.train()
+    return idx
+
 model = GPTLanguageModel()
 m = model.to(device)
 # print the number of parameters in the model
@@ -392,10 +480,17 @@ for iter in range(max_iters):
     loss.backward()
     optimizer.step()
 
-# generate from the model
+# ── Generate: eager vs CUDA graph comparison ──
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
-max_gen = block_size - context.shape[1] # total capacity - space initial prompt takes up
+max_gen = block_size - context.shape[1]
+
+print("\n── Eager (KV cache) ──")
+torch.manual_seed(42)
 print(decode(generate_kv_cache(m, context, max_gen)[0].tolist()))
+
+print("\n── CUDA Graph ──")
+torch.manual_seed(42)
+print(decode(generate_cuda_graph(m, context, max_gen)[0].tolist()))
 #open('more.txt', 'w').write(decode(m.generate(context, max_new_tokens=10000)[0].tolist()))
 
 
