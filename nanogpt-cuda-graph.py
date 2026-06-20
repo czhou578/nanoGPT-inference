@@ -24,6 +24,9 @@ from torch.nn import functional as F
 from benchmarks.kv_cache_baseline_benchmark_runs import (
     run_kv_cache_baseline_benchmark_suite,
 )
+from benchmarks.cuda_graph_benchmark_runs import (
+    run_cuda_graph_benchmark_suite,
+)
 
 # hyperparameters
 # batch_size = 64 # how many independent sequences will we process in parallel?
@@ -528,3 +531,11 @@ def generate_with_cache(model, idx, max_new_tokens):
 #     device=device,
 #     block_size=block_size,
 # )
+
+run_cuda_graph_benchmark_suite(
+    m,
+    train_data=train_data,
+    clear_cache_fn=clear_kv_cache,
+    device=device,
+    block_size=block_size,
+)
