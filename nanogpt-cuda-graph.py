@@ -100,8 +100,8 @@ def estimate_loss(): #evaluates average loss over multiple batches
 def clear_kv_cache(model):
     for module in model.modules():
         if isinstance(module, CausalSelfAttention):
-            module.key_cache = None
-            module.value_cache = None
+            module.key_cache.zero_()
+            module.value_cache.zero_()
 
 class CausalSelfAttention(nn.Module):
     """
@@ -115,40 +115,51 @@ class CausalSelfAttention(nn.Module):
         self.head_size = head_size
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
 
-        self.key_cache = None
-        self.value_cache = None
+        self.key_cache = torch.zeros(1, num_heads, block_size, head_size, device=device)
+        self.value_cache = torch.zeros(1, num_heads, block_size, head_size, device=device)
 
-    def forward(self, x):
+    def forward(self, x, cache_pos=None):
         B, T, C = x.shape
         qkv = self.qkv(x) # (B, T, 3 * n_embd)
         q, k, v = qkv.split(n_embd, dim=2) # (B, T, n_embd)
-        # reshape to (B, T, head_size)
+        # reshape to (B, n_head, T, head_size)
         q = q.view(B, T, self.num_heads, self.head_size).transpose(1, 2)
         k = k.view(B, T, self.num_heads, self.head_size).transpose(1, 2)
         v = v.view(B, T, self.num_heads, self.head_size).transpose(1, 2)
 
-        # can also use F.scaled_dot_product_attention here
-        if not self.training:
-            if self.key_cache is not None:
-                self.key_cache   = torch.cat([self.key_cache, k], dim=2)   # dim=2 is T now
-                self.value_cache = torch.cat([self.value_cache, v], dim=2)
-            else:
-                self.key_cache, self.value_cache = k, v
+        if not self.training and cache_pos is not None:
+            # ── Inference path: write into pre-allocated cache ──
+            # cache_pos is the starting position for these T new tokens
+            # e.g. prefill 4 tokens: cache_pos=0, T=4 → write slots 0,1,2,3
+            # e.g. decode step:      cache_pos=4, T=1 → write slot 4
+            self.key_cache[:, :, cache_pos:cache_pos + T, :] = k
+            self.value_cache[:, :, cache_pos:cache_pos + T, :] = v
 
+            # ── Attend over FULL cache, mask unfilled + causal ──
             scale = self.head_size ** -0.5
-            attn = (q @ self.key_cache.transpose(-2, -1)) * scale  # (B, n_head, T_q, T_cache)
+            attn = (q @ self.key_cache.transpose(-2, -1)) * scale  # (B, n_head, T, block_size)
+
+            # Build mask: query at absolute position (cache_pos + i) can see
+            # KV positions 0..cache_pos+i (causal) and nothing beyond.
+            # Shape: (T, block_size) — broadcasts over (B, n_head)
+            q_positions  = torch.arange(cache_pos, cache_pos + T, device=x.device)  # (T,)
+            kv_positions = torch.arange(block_size, device=x.device)                 # (block_size,)
+            mask = kv_positions.unsqueeze(0) <= q_positions.unsqueeze(1)              # (T, block_size)
+            attn = attn.masked_fill(~mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+
             attn = F.softmax(attn, dim=-1)
-            out  = attn @ self.value_cache  # (B, n_head, T_q, head_size)
+            out  = attn @ self.value_cache  # (B, n_head, T, head_size)
         else:
+            # ── Training path: standard causal attention, no cache ──
             scale = self.head_size ** -0.5
             attn = (q @ k.transpose(-2, -1)) * scale  # (B, n_head, T, T)
-            attn = attn.masked_fill(self.tril[:T, :T] == 0, float('-inf'))  # ← missing
+            attn = attn.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
             attn = F.softmax(attn, dim=-1)
             out  = attn @ v
 
         out = out.transpose(1, 2).contiguous().view(B, T, C)  # (B, T, n_embd)
         out = self.attn_proj(out)
-        return out   
+        return out
 
 class FeedFoward(nn.Module):
     """ a simple linear layer followed by a non-linearity """
@@ -177,8 +188,8 @@ class Block(nn.Module):
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
 
-    def forward(self, x):
-        x = x + self.sa(self.ln1(x))
+    def forward(self, x, cache_pos=None):
+        x = x + self.sa(self.ln1(x), cache_pos=cache_pos)
         x = x + self.ffwd(self.ln2(x))
         return x
 
@@ -189,7 +200,8 @@ class GPTLanguageModel(nn.Module):
         # each token directly reads off the logits for the next token from a lookup table
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
-        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)])
+        # ModuleList so we can pass cache_pos through each block
+        self.blocks = nn.ModuleList([Block(n_embd, n_head=n_head) for _ in range(n_layer)])
         self.ln_f = nn.LayerNorm(n_embd) # final layer norm
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
@@ -204,14 +216,15 @@ class GPTLanguageModel(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None, start_pos=0):
+    def forward(self, idx, targets=None, start_pos=0, cache_pos=None):
         B, T = idx.shape
 
         # idx and targets are both (B,T) tensor of integers
         tok_emb = self.token_embedding_table(idx) # (B,T,C)
         pos_emb = self.position_embedding_table(torch.arange(start_pos, start_pos + T, device=device)) # (T,C)
         x = tok_emb + pos_emb # (B,T,C)
-        x = self.blocks(x) # (B,T,C)
+        for block in self.blocks:
+            x = block(x, cache_pos=cache_pos) # (B,T,C)
         x = self.ln_f(x) # (B,T,C)
         logits = self.lm_head(x) # (B,T,vocab_size)
 
@@ -246,8 +259,13 @@ def generate_kv_cache(model, idx, max_new_tokens):
     model.eval()
     clear_kv_cache(model)
     
+    T_prompt = idx.shape[1]
+    
     # Prefill: process the initial context all at once
-    logits, _ = model(idx)
+    # cache_pos=0 means "write these T_prompt tokens starting at slot 0"
+    logits, _ = model(idx, cache_pos=0)
+    
+    cache_pos = T_prompt  # next token goes into this slot
     
     for _ in range(max_new_tokens):
         # focus only on the last time step
@@ -259,8 +277,11 @@ def generate_kv_cache(model, idx, max_new_tokens):
         # append sampled index to the running sequence
         idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
         
-        # Forward pass with ONLY the new token. We pass start_pos to get the right position embeddings.
-        logits, _ = model(idx_next, start_pos=idx.shape[1] - 1)
+        # Forward pass with ONLY the new token.
+        # start_pos = cache_pos for correct position embedding
+        # cache_pos = cache_pos for writing into the correct cache slot
+        logits, _ = model(idx_next, start_pos=cache_pos, cache_pos=cache_pos)
+        cache_pos += 1
         
     model.train()
     return idx
