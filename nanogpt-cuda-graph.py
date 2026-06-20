@@ -46,7 +46,7 @@ block_size = 64        # keep same for now so your benchmark assumptions hold
 max_iters = 1000         # much faster than 5000
 eval_interval = 200
 learning_rate = 1e-3
-device = 'cpu'          # force CPU
+device = 'cuda'         # CUDA graphs require GPU
 eval_iters = 10         # much faster validation
 n_embd = 32             # was 64
 n_head = 4              # 32 / 4 = 8 dim per head
@@ -115,10 +115,16 @@ class CausalSelfAttention(nn.Module):
         self.head_size = head_size
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
 
+        # Pre-allocated KV cache — fixed address, never reallocated
         self.key_cache = torch.zeros(1, num_heads, block_size, head_size, device=device)
         self.value_cache = torch.zeros(1, num_heads, block_size, head_size, device=device)
 
+        # Static buffer for decode masking — avoids torch.arange in the graph
+        # kv_indices[j] = j, so "kv_indices <= cache_pos" gives the valid mask
+        self.register_buffer('kv_indices', torch.arange(block_size))
+
     def forward(self, x, cache_pos=None):
+        """Used for training and eager-mode prefill/decode. NOT graph-captured."""
         B, T, C = x.shape
         qkv = self.qkv(x) # (B, T, 3 * n_embd)
         q, k, v = qkv.split(n_embd, dim=2) # (B, T, n_embd)
@@ -129,9 +135,6 @@ class CausalSelfAttention(nn.Module):
 
         if not self.training and cache_pos is not None:
             # ── Inference path: write into pre-allocated cache ──
-            # cache_pos is the starting position for these T new tokens
-            # e.g. prefill 4 tokens: cache_pos=0, T=4 → write slots 0,1,2,3
-            # e.g. decode step:      cache_pos=4, T=1 → write slot 4
             self.key_cache[:, :, cache_pos:cache_pos + T, :] = k
             self.value_cache[:, :, cache_pos:cache_pos + T, :] = v
 
@@ -141,7 +144,6 @@ class CausalSelfAttention(nn.Module):
 
             # Build mask: query at absolute position (cache_pos + i) can see
             # KV positions 0..cache_pos+i (causal) and nothing beyond.
-            # Shape: (T, block_size) — broadcasts over (B, n_head)
             q_positions  = torch.arange(cache_pos, cache_pos + T, device=x.device)  # (T,)
             kv_positions = torch.arange(block_size, device=x.device)                 # (block_size,)
             mask = kv_positions.unsqueeze(0) <= q_positions.unsqueeze(1)              # (T, block_size)
@@ -158,6 +160,44 @@ class CausalSelfAttention(nn.Module):
             out  = attn @ v
 
         out = out.transpose(1, 2).contiguous().view(B, T, C)  # (B, T, n_embd)
+        out = self.attn_proj(out)
+        return out
+
+    def decode_cached(self, x, cache_pos):
+        """
+        Graph-safe decode: T is always 1, no torch.arange, no conditionals.
+
+        cache_pos: scalar tensor (shape ()) — the slot to write into.
+                   This is a static buffer whose VALUE changes but ADDRESS doesn't.
+        """
+        B, T, C = x.shape  # T is always 1
+        qkv = self.qkv(x)
+        q, k, v = qkv.split(n_embd, dim=2)
+        q = q.view(B, 1, self.num_heads, self.head_size).transpose(1, 2)  # (B, n_head, 1, hs)
+        k = k.view(B, 1, self.num_heads, self.head_size).transpose(1, 2)
+        v = v.view(B, 1, self.num_heads, self.head_size).transpose(1, 2)
+
+        # ── Write new K/V into the cache at the correct slot ──
+        # index_copy_ is in-place and graph-safe: copies k into key_cache
+        # at the position(s) specified by cache_pos along dim 2
+        self.key_cache.index_copy_(2, cache_pos.view(1), k)
+        self.value_cache.index_copy_(2, cache_pos.view(1), v)
+
+        # ── Attend over full cache with static mask ──
+        scale = self.head_size ** -0.5
+        attn = (q @ self.key_cache.transpose(-2, -1)) * scale  # (B, n_head, 1, block_size)
+
+        # Mask: kv_indices is [0,1,2,...,63] (registered buffer, fixed address)
+        # cache_pos is a scalar tensor. This comparison is a pure GPU op
+        # that the graph captures — on replay, cache_pos has a new value,
+        # so the mask changes, but the operation and tensor addresses are the same.
+        mask = self.kv_indices <= cache_pos  # (block_size,)
+        attn = attn.masked_fill(~mask.view(1, 1, 1, block_size), float('-inf'))
+
+        attn = F.softmax(attn, dim=-1)
+        out  = attn @ self.value_cache  # (B, n_head, 1, head_size)
+
+        out = out.transpose(1, 2).contiguous().view(B, 1, C)
         out = self.attn_proj(out)
         return out
 
@@ -193,6 +233,12 @@ class Block(nn.Module):
         x = x + self.ffwd(self.ln2(x))
         return x
 
+    def decode_cached(self, x, cache_pos):
+        """Graph-safe path — delegates to CausalSelfAttention.decode_cached."""
+        x = x + self.sa.decode_cached(self.ln1(x), cache_pos)
+        x = x + self.ffwd(self.ln2(x))
+        return x
+
 class GPTLanguageModel(nn.Module):
 
     def __init__(self):
@@ -200,10 +246,18 @@ class GPTLanguageModel(nn.Module):
         # each token directly reads off the logits for the next token from a lookup table
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
+
         # ModuleList so we can pass cache_pos through each block
         self.blocks = nn.ModuleList([Block(n_embd, n_head=n_head) for _ in range(n_layer)])
         self.ln_f = nn.LayerNorm(n_embd) # final layer norm
         self.lm_head = nn.Linear(n_embd, vocab_size)
+
+        # ── Static buffers for CUDA graph replay (Hint 2) ──
+        # These tensors are allocated ONCE. Their addresses never change.
+        # Before each graph.replay(), we .copy_() / .fill_() new values in.
+        self.static_input_ids = torch.zeros(1, 1, dtype=torch.long, device=device)
+        self.static_position  = torch.zeros(1, dtype=torch.long, device=device)
+        self.static_cache_pos = torch.zeros(1, dtype=torch.long, device=device)
 
         # better init, not covered in the original GPT video, but important, will cover in followup video
         self.apply(self._init_weights)
@@ -217,6 +271,7 @@ class GPTLanguageModel(nn.Module):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def forward(self, idx, targets=None, start_pos=0, cache_pos=None):
+        """Used for training and eager-mode prefill/decode. NOT graph-captured."""
         B, T = idx.shape
 
         # idx and targets are both (B,T) tensor of integers
@@ -237,6 +292,33 @@ class GPTLanguageModel(nn.Module):
             loss = F.cross_entropy(logits, targets)
 
         return logits, loss
+
+    def decode_one_token(self):
+        """
+        Graph-safe decode: reads from static buffers, no dynamic shapes.
+
+        This method has NO parameters — it reads from self.static_input_ids,
+        self.static_position, and self.static_cache_pos. Before calling this
+        (or replaying the graph that captured it), you .copy_()/.fill_() the
+        actual values into those buffers.
+
+        Every operation here is a fixed-shape GPU operation:
+        - No torch.arange (uses static_position buffer instead)
+        - No if/else branches
+        - No Python integers as tensor indices (uses scalar tensors)
+        """
+        # ── Embedding lookup from static buffers ──
+        tok_emb = self.token_embedding_table(self.static_input_ids)   # (1, 1, n_embd)
+        pos_emb = self.position_embedding_table(self.static_position) # (1, n_embd)
+        x = tok_emb + pos_emb  # broadcasts: (1, 1, n_embd) + (1, n_embd) → (1, 1, n_embd)
+
+        # ── Run through all blocks using the graph-safe decode path ──
+        for block in self.blocks:
+            x = block.decode_cached(x, self.static_cache_pos)
+
+        x = self.ln_f(x)            # (1, 1, n_embd)
+        logits = self.lm_head(x)    # (1, 1, vocab_size)
+        return logits
 
     def generate(self, idx, max_new_tokens):
         # idx is (B, T) array of indices in the current context
