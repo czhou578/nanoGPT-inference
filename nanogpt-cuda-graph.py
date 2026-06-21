@@ -21,9 +21,6 @@ Run:
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from benchmarks.kv_cache_baseline_benchmark_runs import (
-    run_kv_cache_baseline_benchmark_suite,
-)
 from benchmarks.cuda_graph_benchmark_runs import (
     run_cuda_graph_benchmark_suite,
 )
@@ -525,13 +522,6 @@ def generate_with_cache(model, idx, max_new_tokens):
             idx = torch.cat((idx, idx_next), dim=1)
     return idx
     
-# run_kv_cache_baseline_benchmark_suite(
-#     m,
-#     train_data=train_data,
-#     device=device,
-#     block_size=block_size,
-# )
-
 run_cuda_graph_benchmark_suite(
     m,
     train_data=train_data,
