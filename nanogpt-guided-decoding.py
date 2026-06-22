@@ -348,26 +348,7 @@ def generate_guided_static(model, idx, masks):
     
     model.train()
     return idx
-    
-    # TODO: implement this
-    #
-    # This is almost identical to generate_kv_cache().
-    # The only change: after extracting logits[:, -1, :] and BEFORE softmax,
-    # call apply_token_mask(logits, masks[step_index]).
-    #
-    # Pseudocode:
-    #   logits, _ = model(idx)                       # prefill
-    #   for i in range(len(masks)):
-    #       logits = logits[:, -1, :]                 # last token logits
-    #       logits = apply_token_mask(logits, masks[i])  # ← NEW
-    #       probs = F.softmax(logits, dim=-1)
-    #       idx_next = torch.multinomial(probs, num_samples=1)
-    #       idx = torch.cat((idx, idx_next), dim=1)
-    #       logits, _ = model(idx_next, start_pos=idx.shape[1] - 1)
-    #
-    # Don't forget to call model.train() at the end.
 
-    pass
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Step 4: Finite State Machine (Level 2)
@@ -408,15 +389,16 @@ class GuidedFSM:
         This is the union of all token sets from transitions leaving
         the current state.
         """
-        # TODO: implement this
-        #
-        # Hint: iterate over self.transitions[self.current_state],
-        # union all the token_sets together.
-        #
-        # Edge case: if current_state has no transitions (shouldn't
-        # happen if FSM is well-designed), return empty set.
 
-        pass
+        allowed = set()
+
+        if self.current_state not in self.transitions:
+            return allowed 
+
+        for ts, nt in self.transitions[self.current_state]:
+            allowed.update(ts)
+
+        return allowed
 
     def advance(self, token_id):
         """
@@ -427,6 +409,14 @@ class GuidedFSM:
 
         Returns True if the transition was valid.
         """
+
+        for ts, nt in self.transitions[self.current_state]:
+            if token_id in ts:
+                self.current_state = nt
+                return True
+
+        return False
+
         # TODO: implement this
         #
         # Iterate over transitions from self.current_state.
@@ -474,6 +464,24 @@ def generate_guided(model, idx, fsm, max_new_tokens):
     model.eval()
     clear_kv_cache(model)
     fsm.reset()
+
+    logits, _ = model(idx)
+    for _ in range(max_new_tokens):
+        logits = logits[:, -1, :]
+        allowed = fsm.allowed_tokens()
+        logits = apply_token_mask(logits, allowed)
+        probs = F.softmax(logits, dim=-1)
+        idx_next = torch.multinomial(probs, num_samples=1)
+        idx = torch.cat((idx, idx_next), dim=1)
+        fsm.advance(idx_next.item())
+
+        if fsm.is_complete():
+            break
+        
+        logits, _ = model(idx, start_pos=idx.shape[1] - 1)
+    
+    model.train()
+    return idx
 
     # TODO: implement this
     #
