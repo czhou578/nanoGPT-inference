@@ -1,5 +1,6 @@
 """
-Streaming inference server for NanoGPT with radix-tree prefix caching.
+Streaming inference server for NanoGPT with radix-tree prefix caching
+and real-time metrics.
 
 Start:
     python server.py
@@ -27,6 +28,12 @@ Shared prefix (radix cache hit on second request):
 
 Check engine state:
     curl localhost:8000/health
+
+Metrics (JSON):
+    curl localhost:8000/metrics
+
+Metrics (Prometheus):
+    curl -H "Accept: text/plain" localhost:8000/metrics
 """
 
 import asyncio
@@ -38,10 +45,12 @@ import time
 
 import torch
 import torch.nn.functional as F
-from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse, PlainTextResponse
 from pydantic import BaseModel
 import uvicorn
+
+from benchmarks.metrics import InferenceMetrics
 
 
 # ── Load engine module ────────────────────────────────────────────────────────
@@ -101,14 +110,16 @@ class InferenceEngine:
             block_size=block_size,
         )
         self.step = 0
+        self.metrics = InferenceMetrics()
 
         # Pending requests (written by HTTP handlers, read by engine thread)
         self._pending: list = []
         self._lock = threading.Lock()
 
-        # Per-request token delivery queues
+        # Per-request token delivery queues and timing
         self._queues: dict[int, asyncio.Queue] = {}
         self._submit_times: dict[int, float] = {}
+        self._last_token_times: dict[int, float] = {}  # for ITL tracking
         self._next_id = 0
 
         # Set by startup so the engine thread can push to asyncio queues
@@ -134,6 +145,10 @@ class InferenceEngine:
             self._queues[req_id] = queue
             self._submit_times[req_id] = time.perf_counter()
 
+        self.metrics.inc("requests_total")
+        self.metrics.inc("tokens_prefilled_total", len(prompt_tokens))
+        self.metrics.inc_gauge("waiting_requests")
+
         return req_id, queue
 
     # ── Engine loop (runs in background thread) ───────────────────────────
@@ -154,7 +169,16 @@ class InferenceEngine:
     def _finish(self, req_id: int):
         self._put(req_id, None)  # sentinel
         self._queues.pop(req_id, None)
-        self._submit_times.pop(req_id, None)
+
+        # Record E2E latency
+        submit_time = self._submit_times.pop(req_id, None)
+        if submit_time is not None:
+            e2e = time.perf_counter() - submit_time
+            self.metrics.observe("e2e_seconds", e2e)
+
+        self._last_token_times.pop(req_id, None)
+        self.metrics.inc("requests_completed")
+        self.metrics.inc_gauge("active_requests", -1.0)
 
     def run_loop(self):
         """Main engine loop — mirrors scheduled_generate but never terminates."""
@@ -172,6 +196,15 @@ class InferenceEngine:
                 if not has_work:
                     time.sleep(0.01)
                     continue
+
+                # Update queue-depth gauges
+                self.metrics.set_gauge(
+                    "waiting_requests", len(self.scheduler.waiting)
+                )
+                self.metrics.set_gauge(
+                    "active_requests",
+                    len(self.scheduler.active) + len(self.scheduler.prefilling),
+                )
 
                 prefill_req, decode_reqs = self.scheduler.schedule(self.step)
 
@@ -227,13 +260,27 @@ class InferenceEngine:
                             self.scheduler.radix_tree.unlock_radix_path(prefill_req)
                             self.scheduler.promote(prefill_req)
 
+                            # Record TTFT
+                            now = time.perf_counter()
+                            submit_time = self._submit_times.get(prefill_req.id)
+                            if submit_time is not None:
+                                ttft = now - submit_time
+                                self.metrics.observe("ttft_seconds", ttft)
+                            self._last_token_times[prefill_req.id] = now
+
+                            self.metrics.inc("tokens_generated_total")
+                            self.metrics.observe(
+                                "prefill_tokens_per_step",
+                                len(prefill_req.prompt_tokens),
+                            )
+
                             # Stream the first token
                             self._put(prefill_req.id, {
                                 "token": E.decode([token_id]),
                                 "token_id": token_id,
                                 "is_first": True,
                                 "ttft_ms": round(
-                                    (time.perf_counter() - self._submit_times.get(prefill_req.id, 0)) * 1000, 1
+                                    (now - self._submit_times.get(prefill_req.id, 0)) * 1000, 1
                                 ),
                             })
 
@@ -266,12 +313,23 @@ class InferenceEngine:
                         req.generated_tokens.append(token_id)
                         req._last_token = idx_next[i:i + 1]
 
+                        # Record ITL
+                        now = time.perf_counter()
+                        last_time = self._last_token_times.get(req.id)
+                        if last_time is not None:
+                            self.metrics.observe("itl_seconds", now - last_time)
+                        self._last_token_times[req.id] = now
+
+                        self.metrics.inc("tokens_generated_total")
+
                         # Stream the token
                         self._put(req.id, {
                             "token": E.decode([token_id]),
                             "token_id": token_id,
                             "is_first": False,
                         })
+
+                    self.metrics.observe("batch_size_per_step", len(active))
 
                     for req in list(active):
                         if req.is_done:
@@ -328,6 +386,21 @@ def health():
         "active": len(engine.scheduler.active),
         "pending_submit": len(engine._pending),
     }
+
+
+@app.get("/metrics")
+async def metrics(request: Request):
+    """Return engine metrics in JSON or Prometheus text format.
+
+    Use Accept: text/plain for Prometheus format, otherwise JSON.
+    """
+    accept = request.headers.get("accept", "application/json")
+    if "text/plain" in accept:
+        return PlainTextResponse(
+            content=engine.metrics.prometheus_text(),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
+    return engine.metrics.snapshot()
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

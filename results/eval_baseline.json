@@ -1,0 +1,21 @@
+{
+  "implementation": "baseline_no_cache",
+  "perplexity": 19.74782441192015,
+  "repetition_ratio": 0.22526690391459123,
+  "distinct_2": 0.12040133779264214,
+  "distinct_3": 0.14093959731543623,
+  "consistency": 1.0,
+  "num_prompts": 10,
+  "num_tokens_generated": 300,
+  "eval_time_seconds": 0.7447385140112601,
+  "timestamp": "2026-06-20T20:31:50.092594+00:00",
+  "config": {
+    "block_size": 64,
+    "vocab_size": 65,
+    "device": "cpu",
+    "prompt_len": 16,
+    "max_new_tokens": 30,
+    "num_prompts": 10,
+    "num_seeds": 3
+  }
+}
