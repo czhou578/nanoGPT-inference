@@ -1,8 +1,8 @@
 # 🧠 NanoGPT Inference Engine — From First Principles
 
-A deep-dive systems project that **implements 12 production inference optimizations from scratch** on top of Andrej Karpathy's NanoGPT, each paired with automated benchmark suites, a quality evaluation harness, and interactive browser-based visualizations. The goal is to demonstrate a first-principles understanding of how modern LLM inference engines (like vLLM and SGLang) work internally — not by reading about them, but by building each component by hand.
+A deep-dive systems project that **implements 15 production inference optimizations from scratch** on top of Andrej Karpathy's NanoGPT, each paired with automated benchmark suites, a quality evaluation harness, and interactive browser-based visualizations. The goal is to demonstrate a first-principles understanding of how modern LLM inference engines (like vLLM and SGLang) work internally — not by reading about them, but by building each component by hand.
 
-> **TL;DR** — Trained a character-level GPT on Shakespeare, then progressively added KV caching, continuous batching, paged attention, chunked prefill, prefix caching, scheduling, speculative decoding, interleaved prefill-decode, INT8 quantization, radix tree prefix caching, and a streaming HTTP server. Every optimization is benchmarked for throughput and latency, validated for output quality via an automated eval harness with regression detection, the key concepts are visualized in a React-based interactive simulation frontend, and the implementations are compared side-by-side against vLLM and SGLang production code.
+> **TL;DR** — Trained a character-level GPT on Shakespeare, then progressively added KV caching, sliding-window attention, continuous batching, paged attention, chunked prefill, prefix caching, scheduling, speculative decoding, interleaved prefill-decode, fused attention, INT8 quantization, radix tree prefix caching, disaggregated prefill, and a streaming HTTP server. Every optimization is benchmarked for throughput and latency, validated for output quality via an automated eval harness with regression detection, the key concepts are visualized in a React-based interactive simulation frontend, and the implementations are compared side-by-side against vLLM and SGLang production code.
 
 ---
 
@@ -13,16 +13,19 @@ A deep-dive systems project that **implements 12 production inference optimizati
 ```mermaid
 graph LR
     A["nanogpt.py\nBaseline"] --> B["KV Cache"]
-    B --> C["Continuous\nBatching"]
+    B --> B2["Sliding\nWindow"]
+    B2 --> C["Continuous\nBatching"]
     C --> D["Chunked\nPrefill"]
     D --> E["Paged\nAttention"]
     E --> F["Prefix\nCaching"]
     F --> G["Scheduling"]
     G --> H["Interleaving"]
     H --> I["Spec Decode"]
-    I --> J["Quantization"]
+    I --> I2["Fused\nAttention"]
+    I2 --> J["Quantization"]
     J --> K["Radix Tree"]
-    K --> L["Streaming\nServer"]
+    K --> K2["Disaggregated\nPrefill"]
+    K2 --> L["Streaming\nServer"]
 ```
 
 ### Repository Structure
@@ -32,22 +35,25 @@ graph LR
 │                          Repository Structure                        │
 ├───────────────────────────────────────────────────────────────────────┤
 │                                                                       │
-│  nanogpt.py                    ← Baseline: Karpathy's NanoGPT        │
-│  nanogpt-kv-cache.py           ← + KV Cache (prefill/decode split)   │
-│  nanogpt-continuous-batching.py← + Continuous Batching + Scheduler    │
-│  nanogpt-chunked-prefill.py    ← + Chunked Prefill                   │
-│  nanogpt-paged-attention.py    ← + PagedAttention (block allocator)  │
-│  nanogpt-prefix-caching.py     ← + Content-hashed prefix caching     │
-│  nanogpt-scheduling.py         ← + FCFS / Priority scheduling        │
-│  nanogpt-interleaving.py       ← + Fused prefill-decode batches      │
-│  nanogpt-spec-decode.py        ← + Speculative decoding (bigram)     │
-│  nanogpt-trigram-spec-decode.py← + Trigram draft model variant        │
-│  nanogpt-quantize.py           ← + Dynamic & Static INT8 quantization│
-│  nanogpt-radix-tree.py         ← + RadixAttention prefix caching     │
-│  server.py                     ← + Streaming HTTP server (FastAPI)   │
-│                                                                       │
-│  benchmarks/                   ← Automated benchmark suites (25 files)│
-│  results/                      ← Raw benchmark output (11 files)     │
+│  nanogpt.py                       ← Baseline: Karpathy's NanoGPT           │
+│  nanogpt-kv-cache.py              ← + KV Cache (prefill/decode split)      │
+│  nanogpt-sliding-window.py        ← + Sliding-window attention             │
+│  nanogpt-continuous-batching.py   ← + Continuous Batching + Scheduler      │
+│  nanogpt-chunked-prefill.py       ← + Chunked Prefill                     │
+│  nanogpt-paged-attention.py       ← + PagedAttention (block allocator)     │
+│  nanogpt-prefix-caching.py        ← + Content-hashed prefix caching       │
+│  nanogpt-scheduling.py            ← + FCFS / Priority scheduling          │
+│  nanogpt-interleaving.py          ← + Fused prefill-decode batches        │
+│  nanogpt-spec-decode.py           ← + Speculative decoding (bigram)       │
+│  nanogpt-trigram-spec-decode.py   ← + Trigram draft model variant          │
+│  nanogpt-fused-attention.py       ← + Fused multi-head attention kernel   │
+│  nanogpt-quantize.py              ← + Dynamic & Static INT8 quantization  │
+│  nanogpt-radix-tree.py            ← + RadixAttention prefix caching       │
+│  nanogpt-disaggregated-prefill.py ← + Disaggregated prefill/decode        │
+│  server.py                        ← + Streaming HTTP server (FastAPI)     │
+│                                                                            │
+│  benchmarks/                      ← Automated benchmark + eval suites     │
+│  results/                         ← Raw benchmark output (16 files)       │
 │  notes/                        ← 30+ research notes & writeups       │
 │  nanogpt-notebooks/            ← Jupyter notebooks for exploration   │
 │  frontend/                     ← React + Vite interactive visualizer │
@@ -468,6 +474,7 @@ Navigate to `http://localhost:5173` to explore the interactive simulations and k
 .
 ├── nanogpt.py                        # Baseline NanoGPT (Karpathy)
 ├── nanogpt-kv-cache.py               # KV cache implementation
+├── nanogpt-sliding-window.py         # Sliding-window attention
 ├── nanogpt-continuous-batching.py     # Continuous batching + request scheduler
 ├── nanogpt-chunked-prefill.py         # Chunked prefill with token budgets
 ├── nanogpt-paged-attention.py         # PagedAttention with block allocator
@@ -475,9 +482,11 @@ Navigate to `http://localhost:5173` to explore the interactive simulations and k
 ├── nanogpt-scheduling.py             # FCFS + priority scheduling with preemption
 ├── nanogpt-interleaving.py           # Fused prefill-decode interleaving
 ├── nanogpt-spec-decode.py            # Speculative decoding (bigram draft)
-├── nanogpt-trigram-spec-decode.py    # Speculative decoding (trigram draft)
+├── nanogpt-trigram-spec-decode.py     # Speculative decoding (trigram draft)
+├── nanogpt-fused-attention.py         # Fused multi-head attention kernel
 ├── nanogpt-quantize.py               # Dynamic + static INT8 quantization
 ├── nanogpt-radix-tree.py             # RadixAttention prefix caching
+├── nanogpt-disaggregated-prefill.py   # Disaggregated prefill/decode
 ├── server.py                          # Streaming FastAPI server
 ├── input.txt                          # Tiny Shakespeare training data
 ├── requirements.txt                   # Python dependencies
@@ -485,7 +494,8 @@ Navigate to `http://localhost:5173` to explore the interactive simulations and k
 ├── benchmarks/                        # Automated benchmark suites
 │   ├── eval_harness.py                # Quality metrics + regression detection
 │   ├── eval_runs.py                   # Eval runner (train → eval → compare)
-│   ├── test_correctness_equivalence.py# Logit-level correctness tests
+│   ├── test_correctness_equivalence.py # Logit-level correctness tests
+│   ├── sliding_window_benchmark_runs.py
 │   ├── kv_cache_baseline_benchmark_runs.py
 │   ├── continuous_batching_benchmark_runs.py
 │   ├── chunked_prefill_benchmark_runs.py
@@ -496,8 +506,12 @@ Navigate to `http://localhost:5173` to explore the interactive simulations and k
 │   ├── speculative_decoding_benchmark_runs.py
 │   ├── trigram_speculative_decoding_benchmark_runs.py
 │   ├── radix_tree_benchmark_runs.py
+│   ├── disaggregated_prefill_benchmark_runs.py
 │   ├── simulation_benchmark_runs.py
 │   └── ... (benchmark implementations + plots)
+│
+├── tests/                             # Additional test suites
+│   └── test_fused_equivalence.py       # Fused attention correctness tests
 │
 ├── results/                           # Raw benchmark output
 │   ├── eval_baseline.json             # Frozen eval harness baseline
