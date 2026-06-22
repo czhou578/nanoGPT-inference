@@ -1,0 +1,172 @@
+
+============================================================
+  NanoGPT Eval Harness
+============================================================
+
+  Loaded data: 1003853 train, 111540 val tokens
+  Vocab size: 65
+  Model: 0.057M parameters
+
+  Training (80 steps)...
+  step 0: train loss 4.1784, val loss 4.1786
+  step 20: train loss 3.6430, val loss 3.6523
+  step 40: train loss 3.3211, val loss 3.3650
+  step 60: train loss 3.1303, val loss 3.1796
+  step 79: train loss 3.0272, val loss 3.0104
+
+  Running eval harness across 5 implementations...
+
+  ────────────────────────────────────────
+  Evaluating: baseline_no_cache
+
+  📊 Eval: baseline_no_cache
+  ──────────────────────────────────────────────────
+  Perplexity:            19.75
+  Repetition ratio:     0.2253
+  Distinct-2:           0.1204
+  Distinct-3:           0.1409
+  Consistency:            1.00
+  Tokens generated:        300
+  Eval time:              0.68s
+
+  ────────────────────────────────────────
+  Evaluating: kv_cache_prefill_decode
+
+  📊 Eval: kv_cache_prefill_decode
+  ──────────────────────────────────────────────────
+  Perplexity:            19.75
+  Repetition ratio:     0.2253
+  Distinct-2:           0.1204
+  Distinct-3:           0.1409
+  Consistency:            1.00
+  Tokens generated:        300
+  Eval time:              0.54s
+
+  ────────────────────────────────────────
+  Evaluating: kv_cache_feed_one
+
+  📊 Eval: kv_cache_feed_one
+  ──────────────────────────────────────────────────
+  Perplexity:            19.75
+  Repetition ratio:     0.2770
+  Distinct-2:           0.1003
+  Distinct-3:           0.1107
+  Consistency:            1.00
+  Tokens generated:        300
+  Eval time:              0.52s
+
+  ────────────────────────────────────────
+  Evaluating: greedy_no_cache
+
+  📊 Eval: greedy_no_cache
+  ──────────────────────────────────────────────────
+  Perplexity:            19.75
+  Repetition ratio:     0.8673
+  Distinct-2:           0.0301
+  Distinct-3:           0.0470
+  Consistency:            1.00
+  Tokens generated:        300
+  Eval time:              0.65s
+
+  ────────────────────────────────────────
+  Evaluating: greedy_kv_cache
+
+  📊 Eval: greedy_kv_cache
+  ──────────────────────────────────────────────────
+  Perplexity:            19.75
+  Repetition ratio:     0.8673
+  Distinct-2:           0.0301
+  Distinct-3:           0.0470
+  Consistency:            1.00
+  Tokens generated:        300
+  Eval time:              0.53s
+
+  ======================================================================
+  Eval Comparison Table
+  ======================================================================
+  implementation          | ppl   | rep_ratio | dist-2 | dist-3 | consist | tokens | time_s
+  ------------------------+-------+-----------+--------+--------+---------+--------+-------
+  baseline_no_cache       | 19.75 | 0.2253    | 0.1204 | 0.1409 | 1.00    | 300    | 0.68  
+  kv_cache_prefill_decode | 19.75 | 0.2253    | 0.1204 | 0.1409 | 1.00    | 300    | 0.54  
+  kv_cache_feed_one       | 19.75 | 0.2770    | 0.1003 | 0.1107 | 1.00    | 300    | 0.52  
+  greedy_no_cache         | 19.75 | 0.8673    | 0.0301 | 0.0470 | 1.00    | 300    | 0.65  
+  greedy_kv_cache         | 19.75 | 0.8673    | 0.0301 | 0.0470 | 1.00    | 300    | 0.53  
+
+
+============================================================
+  Regression Checks (vs baseline_no_cache)
+============================================================
+
+  🔍 Regression Check: kv_cache_prefill_decode vs baseline_no_cache
+  ──────────────────────────────────────────────────
+  Overall: ✅ PASS
+
+  ✅ perplexity            baseline=19.7478  current=19.7478  Δ=+0.0%     threshold=±5%  (↑ bad)
+  ✅ repetition_ratio      baseline=0.2253  current=0.2253  Δ=+0.0%     threshold=±10%  (↑ bad)
+  ✅ distinct_2            baseline=0.1204  current=0.1204  Δ=+0.0%     threshold=±10%  (↓ bad)
+  ✅ distinct_3            baseline=0.1409  current=0.1409  Δ=+0.0%     threshold=±10%  (↓ bad)
+  ✅ consistency           baseline=1.0000  current=1.0000  Δ=+0.0%     threshold=±0%  (↓ bad)
+
+  🔍 Regression Check: kv_cache_feed_one vs baseline_no_cache
+  ──────────────────────────────────────────────────
+  Overall: ❌ REGRESSION DETECTED
+
+  ✅ perplexity            baseline=19.7478  current=19.7478  Δ=+0.0%     threshold=±5%  (↑ bad)
+  ❌ repetition_ratio      baseline=0.2253  current=0.2770  Δ=+23.0%    threshold=±10%  (↑ bad)
+  ❌ distinct_2            baseline=0.1204  current=0.1003  Δ=-16.7%    threshold=±10%  (↓ bad)
+  ❌ distinct_3            baseline=0.1409  current=0.1107  Δ=-21.4%    threshold=±10%  (↓ bad)
+  ✅ consistency           baseline=1.0000  current=1.0000  Δ=+0.0%     threshold=±0%  (↓ bad)
+
+  🔍 Regression Check: greedy_no_cache vs baseline_no_cache
+  ──────────────────────────────────────────────────
+  Overall: ❌ REGRESSION DETECTED
+
+  ✅ perplexity            baseline=19.7478  current=19.7478  Δ=+0.0%     threshold=±5%  (↑ bad)
+  ❌ repetition_ratio      baseline=0.2253  current=0.8673  Δ=+285.0%   threshold=±10%  (↑ bad)
+  ❌ distinct_2            baseline=0.1204  current=0.0301  Δ=-75.0%    threshold=±10%  (↓ bad)
+  ❌ distinct_3            baseline=0.1409  current=0.0470  Δ=-66.7%    threshold=±10%  (↓ bad)
+  ✅ consistency           baseline=1.0000  current=1.0000  Δ=+0.0%     threshold=±0%  (↓ bad)
+
+  🔍 Regression Check: greedy_kv_cache vs baseline_no_cache
+  ──────────────────────────────────────────────────
+  Overall: ❌ REGRESSION DETECTED
+
+  ✅ perplexity            baseline=19.7478  current=19.7478  Δ=+0.0%     threshold=±5%  (↑ bad)
+  ❌ repetition_ratio      baseline=0.2253  current=0.8673  Δ=+285.0%   threshold=±10%  (↑ bad)
+  ❌ distinct_2            baseline=0.1204  current=0.0301  Δ=-75.0%    threshold=±10%  (↓ bad)
+  ❌ distinct_3            baseline=0.1409  current=0.0470  Δ=-66.7%    threshold=±10%  (↓ bad)
+  ✅ consistency           baseline=1.0000  current=1.0000  Δ=+0.0%     threshold=±0%  (↓ bad)
+
+  📁 Saved results to /home/colin-zhou/Projects/nanoGPT-inference/results/eval_results.json
+  📁 Baseline already exists at /home/colin-zhou/Projects/nanoGPT-inference/results/eval_baseline.json
+      Delete it to regenerate from current run.
+
+  🔍 Regression Check: kv_cache_feed_one vs baseline_no_cache
+  ──────────────────────────────────────────────────
+  Overall: ❌ REGRESSION DETECTED
+
+  ✅ perplexity            baseline=19.7478  current=19.7478  Δ=+0.0%     threshold=±5%  (↑ bad)
+  ❌ repetition_ratio      baseline=0.2253  current=0.2770  Δ=+23.0%    threshold=±10%  (↑ bad)
+  ❌ distinct_2            baseline=0.1204  current=0.1003  Δ=-16.7%    threshold=±10%  (↓ bad)
+  ❌ distinct_3            baseline=0.1409  current=0.1107  Δ=-21.4%    threshold=±10%  (↓ bad)
+  ✅ consistency           baseline=1.0000  current=1.0000  Δ=+0.0%     threshold=±0%  (↓ bad)
+
+  🔍 Regression Check: greedy_no_cache vs baseline_no_cache
+  ──────────────────────────────────────────────────
+  Overall: ❌ REGRESSION DETECTED
+
+  ✅ perplexity            baseline=19.7478  current=19.7478  Δ=+0.0%     threshold=±5%  (↑ bad)
+  ❌ repetition_ratio      baseline=0.2253  current=0.8673  Δ=+285.0%   threshold=±10%  (↑ bad)
+  ❌ distinct_2            baseline=0.1204  current=0.0301  Δ=-75.0%    threshold=±10%  (↓ bad)
+  ❌ distinct_3            baseline=0.1409  current=0.0470  Δ=-66.7%    threshold=±10%  (↓ bad)
+  ✅ consistency           baseline=1.0000  current=1.0000  Δ=+0.0%     threshold=±0%  (↓ bad)
+
+  🔍 Regression Check: greedy_kv_cache vs baseline_no_cache
+  ──────────────────────────────────────────────────
+  Overall: ❌ REGRESSION DETECTED
+
+  ✅ perplexity            baseline=19.7478  current=19.7478  Δ=+0.0%     threshold=±5%  (↑ bad)
+  ❌ repetition_ratio      baseline=0.2253  current=0.8673  Δ=+285.0%   threshold=±10%  (↑ bad)
+  ❌ distinct_2            baseline=0.1204  current=0.0301  Δ=-75.0%    threshold=±10%  (↓ bad)
+  ❌ distinct_3            baseline=0.1409  current=0.0470  Δ=-66.7%    threshold=±10%  (↓ bad)
+  ✅ consistency           baseline=1.0000  current=1.0000  Δ=+0.0%     threshold=±0%  (↓ bad)
