@@ -1,8 +1,8 @@
 # 🧠 NanoGPT Inference Engine — From First Principles
 
-A deep-dive systems project that **implements 12 production inference optimizations from scratch** on top of Andrej Karpathy's NanoGPT, each paired with automated benchmark suites and interactive browser-based visualizations. The goal is to demonstrate a first-principles understanding of how modern LLM inference engines (like vLLM and SGLang) work internally — not by reading about them, but by building each component by hand.
+A deep-dive systems project that **implements 12 production inference optimizations from scratch** on top of Andrej Karpathy's NanoGPT, each paired with automated benchmark suites, a quality evaluation harness, and interactive browser-based visualizations. The goal is to demonstrate a first-principles understanding of how modern LLM inference engines (like vLLM and SGLang) work internally — not by reading about them, but by building each component by hand.
 
-> **TL;DR** — Trained a character-level GPT on Shakespeare, then progressively added KV caching, continuous batching, paged attention, chunked prefill, prefix caching, scheduling, speculative decoding, interleaved prefill-decode, INT8 quantization, radix tree prefix caching, and a streaming HTTP server. Every optimization is benchmarked for throughput and latency, the key concepts are visualized in a React-based interactive simulation frontend, and the implementations are compared side-by-side against vLLM and SGLang production code.
+> **TL;DR** — Trained a character-level GPT on Shakespeare, then progressively added KV caching, continuous batching, paged attention, chunked prefill, prefix caching, scheduling, speculative decoding, interleaved prefill-decode, INT8 quantization, radix tree prefix caching, and a streaming HTTP server. Every optimization is benchmarked for throughput and latency, validated for output quality via an automated eval harness with regression detection, the key concepts are visualized in a React-based interactive simulation frontend, and the implementations are compared side-by-side against vLLM and SGLang production code.
 
 ---
 
@@ -248,8 +248,85 @@ Every optimization includes an automated benchmark harness in `benchmarks/` that
 | Speculative Decoding (Bigram) | `speculative_decoding_benchmark_runs.py` | Acceptance rates, K-value sweep |
 | Speculative Decoding (Trigram) | `trigram_speculative_decoding_benchmark_runs.py` | Trigram vs. bigram acceptance rates |
 | Simulation Traces | `simulation_benchmark_runs.py` | End-to-end request simulation |
+| **Eval Harness** | **`eval_harness.py` + `eval_runs.py`** | **Quality regression detection (perplexity, diversity, consistency)** |
 
 All raw results are stored in `results/` with detailed per-scenario breakdowns.
+
+---
+
+## 🔍 Evaluation Harness — Quality Regression Detection
+
+Throughput benchmarks measure speed, but they can't tell you if the model's output *got worse*. The evaluation harness provides an automated quality safety net that catches silent regressions — degenerate repetition, collapsed diversity, or broken determinism — before they ship.
+
+### Three-Phase Pipeline
+
+```
+Phase 1: Quality Metrics         Phase 2: Eval Runner           Phase 3: Regression Detection
+┌──────────────────────┐    ┌─────────────────────────┐    ┌────────────────────────────┐
+│ compute_perplexity() │    │ Train a small model      │    │ Load frozen baseline       │
+│ compute_repetition() │───▸│ Run harness on each impl │───▸│ Compare current vs baseline│
+│ compute_distinct_n() │    │ Collect EvalResult       │    │ Flag regressions           │
+│ compute_consistency()│    │ Save results to JSON     │    │ Exit with pass/fail code   │
+└──────────────────────┘    └─────────────────────────┘    └────────────────────────────┘
+```
+
+### Metrics
+
+| Metric | What it measures | Failure mode it catches |
+|--------|------------------|------------------------|
+| **Perplexity** | Forward-pass cross-entropy on held-out data | Corrupted model weights, broken attention |
+| **Repetition ratio** | Fraction of repeated tokens within sliding windows | Degenerate repetition loops |
+| **Distinct-2** | Unique bigrams / total bigrams | Collapsed output diversity |
+| **Distinct-3** | Unique trigrams / total trigrams | Rigid pattern repetition |
+| **Consistency** | Same seed → same output across trials | Non-determinism bugs, race conditions |
+
+### Regression Thresholds
+
+| Metric | Threshold | Direction |
+|--------|-----------|-----------|
+| Perplexity | ±5% | Higher is worse |
+| Repetition ratio | ±10% | Higher is worse |
+| Distinct-2 / Distinct-3 | ±10% | Lower is worse |
+| Consistency | 0% (hard gate) | Must be exactly 1.0 |
+
+### Running the Eval Harness
+
+```bash
+# Run the full eval suite (trains model, evaluates all implementations, checks regressions)
+python benchmarks/eval_runs.py
+
+# Exit code is non-zero if any regression detected — suitable for CI
+```
+
+The first run generates a frozen baseline at `results/eval_baseline.json`. Subsequent runs compare against this baseline. To update the baseline after an intentional quality change, delete the file and re-run.
+
+### Example Output
+
+```
+  Eval Comparison Table
+  ======================================================================
+  implementation          | ppl   | rep_ratio | dist-2 | dist-3 | consist
+  ------------------------+-------+-----------+--------+--------+--------
+  baseline_no_cache       | 19.75 | 0.2253    | 0.1204 | 0.1409 | 1.00
+  kv_cache_prefill_decode | 19.75 | 0.2253    | 0.1204 | 0.1409 | 1.00
+  greedy_kv_cache         | 19.75 | 0.8673    | 0.0301 | 0.0470 | 1.00
+
+  🔍 Regression Check: kv_cache_prefill_decode vs baseline_no_cache
+  Overall: ✅ PASS
+  ✅ perplexity        Δ=+0.0%   threshold=±5%
+  ✅ repetition_ratio  Δ=+0.0%   threshold=±10%
+  ✅ distinct_2        Δ=+0.0%   threshold=±10%
+  ✅ consistency       Δ=+0.0%   threshold=±0%
+```
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `benchmarks/eval_harness.py` | Quality metric functions, `EvalHarness` class, `EvalResult`/`RegressionReport` data classes |
+| `benchmarks/eval_runs.py` | Runner script: trains model, sweeps implementations, checks regressions |
+| `results/eval_baseline.json` | Frozen baseline metrics for regression comparison |
+| `results/eval_results.json` | Full results from the most recent eval run |
 
 ---
 
@@ -406,6 +483,9 @@ Navigate to `http://localhost:5173` to explore the interactive simulations and k
 ├── requirements.txt                   # Python dependencies
 │
 ├── benchmarks/                        # Automated benchmark suites
+│   ├── eval_harness.py                # Quality metrics + regression detection
+│   ├── eval_runs.py                   # Eval runner (train → eval → compare)
+│   ├── test_correctness_equivalence.py# Logit-level correctness tests
 │   ├── kv_cache_baseline_benchmark_runs.py
 │   ├── continuous_batching_benchmark_runs.py
 │   ├── chunked_prefill_benchmark_runs.py
@@ -417,14 +497,15 @@ Navigate to `http://localhost:5173` to explore the interactive simulations and k
 │   ├── trigram_speculative_decoding_benchmark_runs.py
 │   ├── radix_tree_benchmark_runs.py
 │   ├── simulation_benchmark_runs.py
-│   ├── test_correctness_equivalence.py
 │   └── ... (benchmark implementations + plots)
 │
 ├── results/                           # Raw benchmark output
+│   ├── eval_baseline.json             # Frozen eval harness baseline
+│   ├── eval_results.json              # Latest eval harness results
 │   ├── kv_cache_results.txt
 │   ├── continuous_batching_results.txt
 │   ├── paged_attention_results.txt
-│   └── ... (11 result files)
+│   └── ... (16 result files)
 │
 ├── nanogpt-notebooks/                 # Jupyter notebooks for exploration
 │   ├── nanogpt-kv-cache.ipynb
