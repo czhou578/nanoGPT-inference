@@ -533,25 +533,29 @@ def compile_pattern(pattern_elements, char_classes, stoi):
         GuidedFSM ready for use with generate_guided()
     """
     fsm = GuidedFSM()
+    state_id = 0
 
-    # TODO: implement this
-    #
-    # Walk through pattern_elements left-to-right, assigning state IDs.
-    #
-    # For a literal like (':', '1'):
-    #   Create a transition from current_state to next_state
-    #   with token_set = {stoi[':']}
-    #
-    # For a class with '+' like ('UPPER', '+'):
-    #   State A --{UPPER}--> State B    (must match at least one)
-    #   State B --{UPPER}--> State B    (self-loop: more is okay)
-    #   Continue building transitions from State B for the next element.
-    #
-    # After processing all elements, mark the final state as an accept state.
-    #
-    # Hint: keep a counter `state_id` that increments as you add states.
-    # The last state_id after the loop is your accept state.
+    for class_or_char, quantifier in pattern_elements:
+        # Resolve the token set: either a named character class or a literal char
+        if class_or_char in char_classes:
+            token_set = char_classes[class_or_char]
+        else:
+            token_set = {stoi[class_or_char]}
 
+        if quantifier == '1':
+            # Exactly one: state_id --{tokens}--> state_id+1
+            fsm.add_transition(state_id, token_set, state_id + 1)
+            state_id += 1
+
+        elif quantifier == '+':
+            # One or more:
+            #   state_id   --{tokens}--> state_id+1   (must match at least one)
+            #   state_id+1 --{tokens}--> state_id+1   (self-loop: more is okay)
+            fsm.add_transition(state_id, token_set, state_id + 1)
+            fsm.add_transition(state_id + 1, token_set, state_id + 1)
+            state_id += 1
+
+    fsm.accept_states = {state_id}
     return fsm
 
 # ══════════════════════════════════════════════════════════════════════════════
