@@ -270,20 +270,19 @@ def build_char_classes(stoi):
     """
     classes = {}
 
-    for token in stoi:
-        char = itos[token]
+    for char, token_id in stoi.items():
         if char.isupper():
-            classes['UPPER'] = classes.get('UPPER', set()) | {token}
+            classes.setdefault('UPPER', set()).add(token_id)
         elif char.islower():
-            classes['LOWER'] = classes.get('LOWER', set()) | {token}
+            classes.setdefault('LOWER', set()).add(token_id)
         elif char.isdigit():
-            classes['DIGIT'] = classes.get('DIGIT', set()) | {token}
-        elif char.isspace():
-            classes['SPACE'] = classes.get('SPACE', set()) | {token}
+            classes.setdefault('DIGIT', set()).add(token_id)
         elif char == '\n':
-            classes['NEWLINE'] = classes.get('NEWLINE', set()) | {token}
+            classes.setdefault('NEWLINE', set()).add(token_id)
+        elif char == ' ':
+            classes.setdefault('SPACE', set()).add(token_id)
         else:
-            classes['PUNCT'] = classes.get('PUNCT', set()) | {token}
+            classes.setdefault('PUNCT', set()).add(token_id)
 
     classes['LETTER'] = classes['UPPER'] | classes['LOWER']
     classes['ANY'] = set(stoi.values())
@@ -590,73 +589,73 @@ print(decode(generate_kv_cache(m, context, max_gen)[0].tolist()))
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── Test: build_char_classes ─────────────────────────────────────────────────
-# char_classes = build_char_classes(stoi)
-# print(f"\nCharacter classes:")
-# for name, ids in sorted(char_classes.items()):
-#     chars_in_class = [itos[i] for i in sorted(ids)]
-#     print(f"  {name:8s} ({len(ids):2d} tokens): {''.join(chars_in_class)}")
+char_classes = build_char_classes(stoi)
+print(f"\nCharacter classes:")
+for name, ids in sorted(char_classes.items()):
+    chars_in_class = [itos[i] for i in sorted(ids)]
+    print(f"  {name:8s} ({len(ids):2d} tokens): {''.join(chars_in_class)}")
 
 # ── Test Level 1: static masks (5 lowercase + newline) ──────────────────────
-# char_classes = build_char_classes(stoi)
-# lowercase_ids = char_classes['LOWER']
-# newline_ids = char_classes['NEWLINE']
-#
-# masks = [lowercase_ids] * 5 + [newline_ids]
-# prompt = torch.zeros((1, 1), dtype=torch.long, device=device)
-# output = generate_guided_static(m, prompt, masks)
-# generated = decode(output[0].tolist())
-# print(f"\n── Static mask test (5 lowercase + newline) ──")
-# print(f"Generated: {repr(generated)}")
-# # Verify: last 6 chars should be [a-z]{5}\n
-# suffix = generated[-6:]
-# assert suffix[-1] == '\n', f"Expected newline at end, got {repr(suffix[-1])}"
-# assert all(c.islower() for c in suffix[:-1]), f"Expected lowercase, got {repr(suffix[:-1])}"
-# print("✓ Constraint satisfied!")
+char_classes = build_char_classes(stoi)
+lowercase_ids = char_classes['LOWER']
+newline_ids = char_classes['NEWLINE']
+
+masks = [lowercase_ids] * 5 + [newline_ids]
+prompt = torch.zeros((1, 1), dtype=torch.long, device=device)
+output = generate_guided_static(m, prompt, masks)
+generated = decode(output[0].tolist())
+print(f"\n── Static mask test (5 lowercase + newline) ──")
+print(f"Generated: {repr(generated)}")
+# Verify: last 6 chars should be [a-z]{5}\n
+suffix = generated[-6:]
+assert suffix[-1] == '\n', f"Expected newline at end, got {repr(suffix[-1])}"
+assert all(c.islower() for c in suffix[:-1]), f"Expected lowercase, got {repr(suffix[:-1])}"
+print("✓ Constraint satisfied!")
 
 # ── Test Level 2: manual FSM (UPPER+: LOWER+\n) ─────────────────────────────
-# char_classes = build_char_classes(stoi)
-#
-# fsm = GuidedFSM()
-# fsm.add_transition(0, char_classes['UPPER'], 1)   # must see >= 1 uppercase
-# fsm.add_transition(1, char_classes['UPPER'], 1)   # self-loop: more uppercase
-# fsm.add_transition(1, {stoi[':']}, 2)             # colon
-# fsm.add_transition(2, {stoi[' ']}, 3)             # space
-# fsm.add_transition(3, char_classes['LOWER'], 4)   # must see >= 1 lowercase
-# fsm.add_transition(4, char_classes['LOWER'], 4)   # self-loop: more lowercase
-# fsm.add_transition(4, {stoi['\n']}, 5)            # newline
-# fsm.accept_states = {5}
-#
-# prompt = torch.zeros((1, 1), dtype=torch.long, device=device)
-# output = generate_guided(m, prompt, fsm, max_new_tokens=30)
-# generated = decode(output[0].tolist())
-# print(f"\n── FSM test (UPPER+: LOWER+\\n) ──")
-# print(f"Generated: {repr(generated)}")
-#
-# # Run it 5 times to see variety
-# for i in range(5):
-#     torch.manual_seed(1337 + i)
-#     fsm.reset()
-#     clear_kv_cache(m)
-#     output = generate_guided(m, prompt, fsm, max_new_tokens=30)
-#     line = decode(output[0].tolist())
-#     # strip prompt (first char)
-#     text = line[1:]  # skip the \0 prompt token
-#     print(f"  Run {i}: {repr(text)}")
+char_classes = build_char_classes(stoi)
+
+fsm = GuidedFSM()
+fsm.add_transition(0, char_classes['UPPER'], 1)   # must see >= 1 uppercase
+fsm.add_transition(1, char_classes['UPPER'], 1)   # self-loop: more uppercase
+fsm.add_transition(1, {stoi[':']}, 2)             # colon
+fsm.add_transition(2, {stoi[' ']}, 3)             # space
+fsm.add_transition(3, char_classes['LOWER'], 4)   # must see >= 1 lowercase
+fsm.add_transition(4, char_classes['LOWER'], 4)   # self-loop: more lowercase
+fsm.add_transition(4, {stoi['\n']}, 5)            # newline
+fsm.accept_states = {5}
+
+prompt = torch.zeros((1, 1), dtype=torch.long, device=device)
+output = generate_guided(m, prompt, fsm, max_new_tokens=30)
+generated = decode(output[0].tolist())
+print(f"\n── FSM test (UPPER+: LOWER+\\n) ──")
+print(f"Generated: {repr(generated)}")
+
+# Run it 5 times to see variety
+for i in range(5):
+    torch.manual_seed(1337 + i)
+    fsm.reset()
+    clear_kv_cache(m)
+    output = generate_guided(m, prompt, fsm, max_new_tokens=30)
+    line = decode(output[0].tolist())
+    # strip prompt (first char)
+    text = line[1:]  # skip the \0 prompt token
+    print(f"  Run {i}: {repr(text)}")
 
 # ── Test Level 2 bonus: compile_pattern ──────────────────────────────────────
-# char_classes = build_char_classes(stoi)
-#
-# pattern = [
-#     ('UPPER', '+'),
-#     (':',     '1'),
-#     (' ',     '1'),
-#     ('LOWER', '+'),
-#     ('\n',    '1'),
-# ]
-# fsm = compile_pattern(pattern, char_classes, stoi)
-#
-# prompt = torch.zeros((1, 1), dtype=torch.long, device=device)
-# output = generate_guided(m, prompt, fsm, max_new_tokens=30)
-# generated = decode(output[0].tolist())
-# print(f"\n── compile_pattern test ──")
-# print(f"Generated: {repr(generated)}")
+char_classes = build_char_classes(stoi)
+
+pattern = [
+    ('UPPER', '+'),
+    (':',     '1'),
+    (' ',     '1'),
+    ('LOWER', '+'),
+    ('\n',    '1'),
+]
+fsm = compile_pattern(pattern, char_classes, stoi)
+
+prompt = torch.zeros((1, 1), dtype=torch.long, device=device)
+output = generate_guided(m, prompt, fsm, max_new_tokens=30)
+generated = decode(output[0].tolist())
+print(f"\n── compile_pattern test ──")
+print(f"Generated: {repr(generated)}")
