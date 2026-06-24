@@ -1,0 +1,562 @@
+/* ── ProfilerPage Layout ─────────────────────────────────────────────────── */
+
+.profiler-page {
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  min-height: 100vh;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* ── Back Link ───────────────────────────────────────────────────────────── */
+
+.profiler-back-link {
+  position: absolute;
+  top: 1.5rem;
+  left: 1.5rem;
+  color: #6b7280;
+  text-decoration: none;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  transition: color 0.2s;
+}
+
+.profiler-back-link:hover {
+  color: #a5b4fc;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+
+.profiler-header {
+  text-align: center;
+  animation: profilerFadeInDown 0.6s ease-out;
+}
+
+.profiler-header h1 {
+  font-size: 2.25rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 30%, #6366f1 70%, #a855f7 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 0.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.profiler-title-icon {
+  -webkit-text-fill-color: initial;
+  font-size: 1.8rem;
+}
+
+.profiler-header p {
+  color: #6b7280;
+  font-size: 0.95rem;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+/* ── Loading Section ─────────────────────────────────────────────────────── */
+
+.profiler-load-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  animation: profilerFadeInUp 0.6s ease-out;
+  max-width: 640px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* ── Drop Zone ───────────────────────────────────────────────────────────── */
+
+.profiler-drop-zone {
+  width: 100%;
+  border: 2px dashed rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 3rem 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.profiler-drop-zone:hover {
+  border-color: rgba(99, 102, 241, 0.4);
+  background: rgba(99, 102, 241, 0.04);
+}
+
+.profiler-drop-zone.dragging {
+  border-color: #6366f1;
+  background: rgba(99, 102, 241, 0.08);
+  box-shadow: 0 0 30px rgba(99, 102, 241, 0.15);
+}
+
+.drop-icon {
+  font-size: 2.5rem;
+  transition: transform 0.3s ease;
+}
+
+.profiler-drop-zone:hover .drop-icon {
+  transform: translateY(-4px);
+}
+
+.drop-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.drop-text strong {
+  color: #e5e7eb;
+  font-size: 1rem;
+}
+
+.drop-text span {
+  color: #6b7280;
+  font-size: 0.85rem;
+}
+
+/* ── Divider ─────────────────────────────────────────────────────────────── */
+
+.profiler-divider {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 1rem;
+  color: #4b5563;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.profiler-divider::before,
+.profiler-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* ── Example Traces ──────────────────────────────────────────────────────── */
+
+.profiler-examples {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.example-btn {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.25s ease;
+  font-family: 'Inter', sans-serif;
+}
+
+.example-btn:hover {
+  background: rgba(99, 102, 241, 0.06);
+  border-color: rgba(99, 102, 241, 0.2);
+  transform: translateY(-1px);
+}
+
+.example-label {
+  color: #e5e7eb;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.example-desc {
+  color: #6b7280;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+/* ── Loading State ───────────────────────────────────────────────────────── */
+
+.profiler-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 3rem;
+  color: #9ca3af;
+  animation: profilerFadeInUp 0.3s ease-out;
+}
+
+.loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(99, 102, 241, 0.2);
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: profilerSpin 0.8s linear infinite;
+}
+
+/* ── Error State ─────────────────────────────────────────────────────────── */
+
+.profiler-error {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  border-radius: 12px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+  font-size: 0.85rem;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.error-dismiss {
+  margin-left: auto;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 6px;
+  color: #fca5a5;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  transition: background 0.2s;
+}
+
+.error-dismiss:hover {
+  background: rgba(239, 68, 68, 0.25);
+}
+
+/* ── Content (trace loaded) ──────────────────────────────────────────────── */
+
+.profiler-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  animation: profilerFadeInUp 0.5s ease-out;
+}
+
+/* ── Toolbar ─────────────────────────────────────────────────────────────── */
+
+.profiler-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.toolbar-info {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.toolbar-filename {
+  color: #e5e7eb;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.toolbar-stats {
+  color: #6b7280;
+  font-size: 0.78rem;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.toolbar-close {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #9ca3af;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  transition: all 0.2s;
+}
+
+.toolbar-close:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+}
+
+/* ── Category Legend ─────────────────────────────────────────────────────── */
+
+.profiler-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  padding: 0.5rem;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.75rem;
+  transition: background 0.2s;
+}
+
+.legend-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.legend-label {
+  color: #d1d5db;
+  font-weight: 500;
+}
+
+.legend-pct {
+  color: #6b7280;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.7rem;
+}
+
+/* ── Summary Breakdown Bar ───────────────────────────────────────────────── */
+
+.profiler-summary-bar {
+  padding: 0 0.5rem;
+}
+
+.summary-breakdown {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  gap: 2px;
+}
+
+.breakdown-segment {
+  border-radius: 4px;
+  opacity: 0.8;
+  transition: opacity 0.2s;
+  min-width: 4px;
+}
+
+.breakdown-segment:hover {
+  opacity: 1;
+}
+
+/* ── Chart Wrapper ───────────────────────────────────────────────────────── */
+
+.profiler-chart-wrapper {
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  padding: 0.5rem;
+}
+
+/* ── Timeline Chart ──────────────────────────────────────────────────────── */
+
+.timeline-chart-container {
+  position: relative;
+  width: 100%;
+  overflow-x: auto;
+}
+
+.timeline-svg {
+  display: block;
+}
+
+.timeline-span rect,
+.timeline-instant polygon {
+  transition: fill-opacity 0.15s ease, stroke 0.15s ease;
+}
+
+/* ── Tooltip ─────────────────────────────────────────────────────────────── */
+
+.timeline-tooltip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 100;
+  background: rgba(15, 15, 20, 0.95);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 0.6rem 0.8rem;
+  min-width: 200px;
+  max-width: 280px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.tooltip-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tooltip-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.tooltip-name {
+  color: #e5e7eb;
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
+.tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.15rem 0;
+}
+
+.tooltip-key {
+  color: #6b7280;
+  font-size: 0.72rem;
+}
+
+.tooltip-val {
+  color: #d1d5db;
+  font-size: 0.72rem;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+/* ── Detail Panel ────────────────────────────────────────────────────────── */
+
+.profiler-detail-panel {
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 1rem 1.25rem;
+  animation: profilerFadeInUp 0.3s ease-out;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.detail-header h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #e5e7eb;
+}
+
+.detail-close {
+  background: none;
+  border: none;
+  color: #6b7280;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  transition: color 0.2s;
+}
+
+.detail-close:hover {
+  color: #fca5a5;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.5rem;
+}
+
+.detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.detail-key {
+  color: #6b7280;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.detail-val {
+  color: #d1d5db;
+  font-size: 0.85rem;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-weight: 500;
+}
+
+/* ── Animations ──────────────────────────────────────────────────────────── */
+
+@keyframes profilerFadeInDown {
+  from { opacity: 0; transform: translateY(-20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes profilerFadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes profilerSpin {
+  100% { transform: rotate(360deg); }
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .profiler-page {
+    padding: 1rem;
+  }
+
+  .profiler-header h1 {
+    font-size: 1.75rem;
+  }
+
+  .profiler-toolbar {
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: flex-start;
+  }
+
+  .detail-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
