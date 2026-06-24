@@ -1,0 +1,1537 @@
+{
+  "traceEvents": [
+    {
+      "name": "request_admitted",
+      "cat": "lifecycle",
+      "ph": "i",
+      "ts": 434,
+      "pid": 0,
+      "tid": "req_0",
+      "s": "t",
+      "args": {
+        "prompt_len": 14,
+        "cached_tokens": 0
+      }
+    },
+    {
+      "name": "scheduler.schedule",
+      "cat": "scheduling",
+      "ph": "X",
+      "ts": 389,
+      "dur": 60,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 0,
+        "num_waiting": 4,
+        "num_active": 0,
+        "num_prefilling": 0
+      }
+    },
+    {
+      "name": "assemble_fused_batch",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 462,
+      "dur": 278,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 0,
+        "chunk_size": 14,
+        "has_prefill": true
+      }
+    },
+    {
+      "name": "model_forward",
+      "cat": "compute",
+      "ph": "X",
+      "ts": 755,
+      "dur": 4329,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 0,
+        "batch_size": 1,
+        "seq_len": 14,
+        "num_decode": 0,
+        "prefill_chunk": 14
+      }
+    },
+    {
+      "name": "disassemble_fused_cache",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 5104,
+      "dur": 163,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_requests": 1
+      }
+    },
+    {
+      "name": "prefill_chunk",
+      "cat": "prefill",
+      "ph": "i",
+      "ts": 5273,
+      "pid": 0,
+      "tid": "req_0",
+      "s": "t",
+      "args": {
+        "chunk_start": 0,
+        "chunk_end": 14,
+        "chunk_tokens": 14
+      }
+    },
+    {
+      "name": "prefill_first_token",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 5280,
+      "dur": 1447,
+      "pid": 0,
+      "tid": "req_0",
+      "args": {}
+    },
+    {
+      "name": "commit_blocks",
+      "cat": "cache_management",
+      "ph": "X",
+      "ts": 6744,
+      "dur": 550,
+      "pid": 0,
+      "tid": "req_0",
+      "args": {}
+    },
+    {
+      "name": "prefill_complete",
+      "cat": "lifecycle",
+      "ph": "i",
+      "ts": 7299,
+      "pid": 0,
+      "tid": "req_0",
+      "s": "t",
+      "args": {
+        "prompt_len": 14
+      }
+    },
+    {
+      "name": "request_admitted",
+      "cat": "lifecycle",
+      "ph": "i",
+      "ts": 7329,
+      "pid": 0,
+      "tid": "req_1",
+      "s": "t",
+      "args": {
+        "prompt_len": 16,
+        "cached_tokens": 0
+      }
+    },
+    {
+      "name": "scheduler.schedule",
+      "cat": "scheduling",
+      "ph": "X",
+      "ts": 7310,
+      "dur": 25,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 1,
+        "num_waiting": 3,
+        "num_active": 1,
+        "num_prefilling": 0
+      }
+    },
+    {
+      "name": "assemble_fused_batch",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 7341,
+      "dur": 302,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 1,
+        "chunk_size": 15,
+        "has_prefill": true
+      }
+    },
+    {
+      "name": "model_forward",
+      "cat": "compute",
+      "ph": "X",
+      "ts": 7651,
+      "dur": 2377,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 1,
+        "batch_size": 2,
+        "seq_len": 15,
+        "num_decode": 1,
+        "prefill_chunk": 15
+      }
+    },
+    {
+      "name": "disassemble_fused_cache",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 10040,
+      "dur": 349,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_requests": 2
+      }
+    },
+    {
+      "name": "decode_sampling",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 10395,
+      "dur": 71,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 1
+      }
+    },
+    {
+      "name": "prefill_chunk",
+      "cat": "prefill",
+      "ph": "i",
+      "ts": 10484,
+      "pid": 0,
+      "tid": "req_1",
+      "s": "t",
+      "args": {
+        "chunk_start": 0,
+        "chunk_end": 15,
+        "chunk_tokens": 15
+      }
+    },
+    {
+      "name": "scheduler.schedule",
+      "cat": "scheduling",
+      "ph": "X",
+      "ts": 10491,
+      "dur": 4,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 2,
+        "num_waiting": 2,
+        "num_active": 1,
+        "num_prefilling": 1
+      }
+    },
+    {
+      "name": "assemble_fused_batch",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 10500,
+      "dur": 120,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 1,
+        "chunk_size": 1,
+        "has_prefill": true
+      }
+    },
+    {
+      "name": "model_forward",
+      "cat": "compute",
+      "ph": "X",
+      "ts": 10626,
+      "dur": 2011,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 2,
+        "batch_size": 2,
+        "seq_len": 1,
+        "num_decode": 1,
+        "prefill_chunk": 1
+      }
+    },
+    {
+      "name": "disassemble_fused_cache",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 12650,
+      "dur": 418,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_requests": 2
+      }
+    },
+    {
+      "name": "decode_sampling",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 13077,
+      "dur": 75,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 1
+      }
+    },
+    {
+      "name": "prefill_chunk",
+      "cat": "prefill",
+      "ph": "i",
+      "ts": 13173,
+      "pid": 0,
+      "tid": "req_1",
+      "s": "t",
+      "args": {
+        "chunk_start": 15,
+        "chunk_end": 16,
+        "chunk_tokens": 1
+      }
+    },
+    {
+      "name": "prefill_first_token",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 13180,
+      "dur": 49,
+      "pid": 0,
+      "tid": "req_1",
+      "args": {}
+    },
+    {
+      "name": "commit_blocks",
+      "cat": "cache_management",
+      "ph": "X",
+      "ts": 13237,
+      "dur": 902,
+      "pid": 0,
+      "tid": "req_1",
+      "args": {}
+    },
+    {
+      "name": "prefill_complete",
+      "cat": "lifecycle",
+      "ph": "i",
+      "ts": 14146,
+      "pid": 0,
+      "tid": "req_1",
+      "s": "t",
+      "args": {
+        "prompt_len": 16
+      }
+    },
+    {
+      "name": "request_admitted",
+      "cat": "lifecycle",
+      "ph": "i",
+      "ts": 14177,
+      "pid": 0,
+      "tid": "req_2",
+      "s": "t",
+      "args": {
+        "prompt_len": 12,
+        "cached_tokens": 0
+      }
+    },
+    {
+      "name": "scheduler.schedule",
+      "cat": "scheduling",
+      "ph": "X",
+      "ts": 14157,
+      "dur": 27,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 3,
+        "num_waiting": 2,
+        "num_active": 2,
+        "num_prefilling": 0
+      }
+    },
+    {
+      "name": "assemble_fused_batch",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 14191,
+      "dur": 469,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 2,
+        "chunk_size": 12,
+        "has_prefill": true
+      }
+    },
+    {
+      "name": "model_forward",
+      "cat": "compute",
+      "ph": "X",
+      "ts": 14686,
+      "dur": 3810,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 3,
+        "batch_size": 3,
+        "seq_len": 12,
+        "num_decode": 2,
+        "prefill_chunk": 12
+      }
+    },
+    {
+      "name": "disassemble_fused_cache",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 18524,
+      "dur": 821,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_requests": 3
+      }
+    },
+    {
+      "name": "decode_sampling",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 19364,
+      "dur": 320,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 2
+      }
+    },
+    {
+      "name": "prefill_chunk",
+      "cat": "prefill",
+      "ph": "i",
+      "ts": 19730,
+      "pid": 0,
+      "tid": "req_2",
+      "s": "t",
+      "args": {
+        "chunk_start": 0,
+        "chunk_end": 12,
+        "chunk_tokens": 12
+      }
+    },
+    {
+      "name": "prefill_first_token",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 19740,
+      "dur": 75,
+      "pid": 0,
+      "tid": "req_2",
+      "args": {}
+    },
+    {
+      "name": "commit_blocks",
+      "cat": "cache_management",
+      "ph": "X",
+      "ts": 19824,
+      "dur": 754,
+      "pid": 0,
+      "tid": "req_2",
+      "args": {}
+    },
+    {
+      "name": "prefill_complete",
+      "cat": "lifecycle",
+      "ph": "i",
+      "ts": 20584,
+      "pid": 0,
+      "tid": "req_2",
+      "s": "t",
+      "args": {
+        "prompt_len": 12
+      }
+    },
+    {
+      "name": "request_admitted",
+      "cat": "lifecycle",
+      "ph": "i",
+      "ts": 20614,
+      "pid": 0,
+      "tid": "req_3",
+      "s": "t",
+      "args": {
+        "prompt_len": 17,
+        "cached_tokens": 0
+      }
+    },
+    {
+      "name": "scheduler.schedule",
+      "cat": "scheduling",
+      "ph": "X",
+      "ts": 20593,
+      "dur": 28,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 4,
+        "num_waiting": 1,
+        "num_active": 3,
+        "num_prefilling": 0
+      }
+    },
+    {
+      "name": "assemble_fused_batch",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 20630,
+      "dur": 669,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 3,
+        "chunk_size": 13,
+        "has_prefill": true
+      }
+    },
+    {
+      "name": "model_forward",
+      "cat": "compute",
+      "ph": "X",
+      "ts": 21314,
+      "dur": 3812,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 4,
+        "batch_size": 4,
+        "seq_len": 13,
+        "num_decode": 3,
+        "prefill_chunk": 13
+      }
+    },
+    {
+      "name": "disassemble_fused_cache",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 25149,
+      "dur": 906,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_requests": 4
+      }
+    },
+    {
+      "name": "decode_sampling",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 26066,
+      "dur": 95,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 3
+      }
+    },
+    {
+      "name": "prefill_chunk",
+      "cat": "prefill",
+      "ph": "i",
+      "ts": 26187,
+      "pid": 0,
+      "tid": "req_3",
+      "s": "t",
+      "args": {
+        "chunk_start": 0,
+        "chunk_end": 13,
+        "chunk_tokens": 13
+      }
+    },
+    {
+      "name": "scheduler.schedule",
+      "cat": "scheduling",
+      "ph": "X",
+      "ts": 26194,
+      "dur": 5,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 5,
+        "num_waiting": 0,
+        "num_active": 3,
+        "num_prefilling": 1
+      }
+    },
+    {
+      "name": "assemble_fused_batch",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 26205,
+      "dur": 342,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 3,
+        "chunk_size": 4,
+        "has_prefill": true
+      }
+    },
+    {
+      "name": "model_forward",
+      "cat": "compute",
+      "ph": "X",
+      "ts": 26554,
+      "dur": 3251,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 5,
+        "batch_size": 4,
+        "seq_len": 4,
+        "num_decode": 3,
+        "prefill_chunk": 4
+      }
+    },
+    {
+      "name": "disassemble_fused_cache",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 29826,
+      "dur": 1083,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_requests": 4
+      }
+    },
+    {
+      "name": "decode_sampling",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 30924,
+      "dur": 142,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 3
+      }
+    },
+    {
+      "name": "prefill_chunk",
+      "cat": "prefill",
+      "ph": "i",
+      "ts": 31105,
+      "pid": 0,
+      "tid": "req_3",
+      "s": "t",
+      "args": {
+        "chunk_start": 13,
+        "chunk_end": 17,
+        "chunk_tokens": 4
+      }
+    },
+    {
+      "name": "prefill_first_token",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 31114,
+      "dur": 62,
+      "pid": 0,
+      "tid": "req_3",
+      "args": {}
+    },
+    {
+      "name": "commit_blocks",
+      "cat": "cache_management",
+      "ph": "X",
+      "ts": 31184,
+      "dur": 1462,
+      "pid": 0,
+      "tid": "req_3",
+      "args": {}
+    },
+    {
+      "name": "prefill_complete",
+      "cat": "lifecycle",
+      "ph": "i",
+      "ts": 32652,
+      "pid": 0,
+      "tid": "req_3",
+      "s": "t",
+      "args": {
+        "prompt_len": 17
+      }
+    },
+    {
+      "name": "scheduler.schedule",
+      "cat": "scheduling",
+      "ph": "X",
+      "ts": 32660,
+      "dur": 14,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 6,
+        "num_waiting": 0,
+        "num_active": 4,
+        "num_prefilling": 0
+      }
+    },
+    {
+      "name": "assemble_fused_batch",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 32682,
+      "dur": 404,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 4,
+        "chunk_size": 0,
+        "has_prefill": false
+      }
+    },
+    {
+      "name": "model_forward",
+      "cat": "compute",
+      "ph": "X",
+      "ts": 33096,
+      "dur": 2193,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 6,
+        "batch_size": 4,
+        "seq_len": 1,
+        "num_decode": 4,
+        "prefill_chunk": 0
+      }
+    },
+    {
+      "name": "disassemble_fused_cache",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 35305,
+      "dur": 797,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_requests": 4
+      }
+    },
+    {
+      "name": "decode_sampling",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 36113,
+      "dur": 139,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 4
+      }
+    },
+    {
+      "name": "scheduler.schedule",
+      "cat": "scheduling",
+      "ph": "X",
+      "ts": 36287,
+      "dur": 6,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 7,
+        "num_waiting": 0,
+        "num_active": 4,
+        "num_prefilling": 0
+      }
+    },
+    {
+      "name": "assemble_fused_batch",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 36298,
+      "dur": 351,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 4,
+        "chunk_size": 0,
+        "has_prefill": false
+      }
+    },
+    {
+      "name": "model_forward",
+      "cat": "compute",
+      "ph": "X",
+      "ts": 36656,
+      "dur": 1991,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 7,
+        "batch_size": 4,
+        "seq_len": 1,
+        "num_decode": 4,
+        "prefill_chunk": 0
+      }
+    },
+    {
+      "name": "disassemble_fused_cache",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 38658,
+      "dur": 673,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_requests": 4
+      }
+    },
+    {
+      "name": "decode_sampling",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 39336,
+      "dur": 73,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 4
+      }
+    },
+    {
+      "name": "scheduler.schedule",
+      "cat": "scheduling",
+      "ph": "X",
+      "ts": 39433,
+      "dur": 5,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 8,
+        "num_waiting": 0,
+        "num_active": 4,
+        "num_prefilling": 0
+      }
+    },
+    {
+      "name": "assemble_fused_batch",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 39442,
+      "dur": 325,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 4,
+        "chunk_size": 0,
+        "has_prefill": false
+      }
+    },
+    {
+      "name": "model_forward",
+      "cat": "compute",
+      "ph": "X",
+      "ts": 39774,
+      "dur": 1864,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 8,
+        "batch_size": 4,
+        "seq_len": 1,
+        "num_decode": 4,
+        "prefill_chunk": 0
+      }
+    },
+    {
+      "name": "disassemble_fused_cache",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 41648,
+      "dur": 658,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_requests": 4
+      }
+    },
+    {
+      "name": "decode_sampling",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 42312,
+      "dur": 65,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 4
+      }
+    },
+    {
+      "name": "scheduler.schedule",
+      "cat": "scheduling",
+      "ph": "X",
+      "ts": 42401,
+      "dur": 4,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 9,
+        "num_waiting": 0,
+        "num_active": 4,
+        "num_prefilling": 0
+      }
+    },
+    {
+      "name": "assemble_fused_batch",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 42409,
+      "dur": 342,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 4,
+        "chunk_size": 0,
+        "has_prefill": false
+      }
+    },
+    {
+      "name": "model_forward",
+      "cat": "compute",
+      "ph": "X",
+      "ts": 42760,
+      "dur": 1952,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 9,
+        "batch_size": 4,
+        "seq_len": 1,
+        "num_decode": 4,
+        "prefill_chunk": 0
+      }
+    },
+    {
+      "name": "disassemble_fused_cache",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 44728,
+      "dur": 693,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_requests": 4
+      }
+    },
+    {
+      "name": "decode_sampling",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 45426,
+      "dur": 86,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 4
+      }
+    },
+    {
+      "name": "scheduler.schedule",
+      "cat": "scheduling",
+      "ph": "X",
+      "ts": 45537,
+      "dur": 5,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 10,
+        "num_waiting": 0,
+        "num_active": 4,
+        "num_prefilling": 0
+      }
+    },
+    {
+      "name": "assemble_fused_batch",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 45546,
+      "dur": 339,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 4,
+        "chunk_size": 0,
+        "has_prefill": false
+      }
+    },
+    {
+      "name": "model_forward",
+      "cat": "compute",
+      "ph": "X",
+      "ts": 45891,
+      "dur": 2532,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 10,
+        "batch_size": 4,
+        "seq_len": 1,
+        "num_decode": 4,
+        "prefill_chunk": 0
+      }
+    },
+    {
+      "name": "disassemble_fused_cache",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 48443,
+      "dur": 725,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_requests": 4
+      }
+    },
+    {
+      "name": "decode_sampling",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 49176,
+      "dur": 97,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 4
+      }
+    },
+    {
+      "name": "scheduler.schedule",
+      "cat": "scheduling",
+      "ph": "X",
+      "ts": 49302,
+      "dur": 5,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 11,
+        "num_waiting": 0,
+        "num_active": 4,
+        "num_prefilling": 0
+      }
+    },
+    {
+      "name": "assemble_fused_batch",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 49312,
+      "dur": 339,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 4,
+        "chunk_size": 0,
+        "has_prefill": false
+      }
+    },
+    {
+      "name": "model_forward",
+      "cat": "compute",
+      "ph": "X",
+      "ts": 49658,
+      "dur": 1913,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 11,
+        "batch_size": 4,
+        "seq_len": 1,
+        "num_decode": 4,
+        "prefill_chunk": 0
+      }
+    },
+    {
+      "name": "disassemble_fused_cache",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 51589,
+      "dur": 706,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_requests": 4
+      }
+    },
+    {
+      "name": "decode_sampling",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 52301,
+      "dur": 89,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 4
+      }
+    },
+    {
+      "name": "request_completed",
+      "cat": "lifecycle",
+      "ph": "i",
+      "ts": 52410,
+      "pid": 0,
+      "tid": "req_0",
+      "s": "t",
+      "args": {
+        "total_tokens": 26,
+        "generated": 12
+      }
+    },
+    {
+      "name": "scheduler.schedule",
+      "cat": "scheduling",
+      "ph": "X",
+      "ts": 52429,
+      "dur": 6,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 12,
+        "num_waiting": 0,
+        "num_active": 3,
+        "num_prefilling": 0
+      }
+    },
+    {
+      "name": "assemble_fused_batch",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 52439,
+      "dur": 350,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 3,
+        "chunk_size": 0,
+        "has_prefill": false
+      }
+    },
+    {
+      "name": "model_forward",
+      "cat": "compute",
+      "ph": "X",
+      "ts": 52795,
+      "dur": 1882,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 12,
+        "batch_size": 3,
+        "seq_len": 1,
+        "num_decode": 3,
+        "prefill_chunk": 0
+      }
+    },
+    {
+      "name": "disassemble_fused_cache",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 54692,
+      "dur": 521,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_requests": 3
+      }
+    },
+    {
+      "name": "decode_sampling",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 55217,
+      "dur": 71,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 3
+      }
+    },
+    {
+      "name": "scheduler.schedule",
+      "cat": "scheduling",
+      "ph": "X",
+      "ts": 55310,
+      "dur": 5,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 13,
+        "num_waiting": 0,
+        "num_active": 3,
+        "num_prefilling": 0
+      }
+    },
+    {
+      "name": "assemble_fused_batch",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 55319,
+      "dur": 299,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 3,
+        "chunk_size": 0,
+        "has_prefill": false
+      }
+    },
+    {
+      "name": "model_forward",
+      "cat": "compute",
+      "ph": "X",
+      "ts": 55624,
+      "dur": 1826,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 13,
+        "batch_size": 3,
+        "seq_len": 1,
+        "num_decode": 3,
+        "prefill_chunk": 0
+      }
+    },
+    {
+      "name": "disassemble_fused_cache",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 57462,
+      "dur": 560,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_requests": 3
+      }
+    },
+    {
+      "name": "decode_sampling",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 58029,
+      "dur": 61,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 3
+      }
+    },
+    {
+      "name": "request_completed",
+      "cat": "lifecycle",
+      "ph": "i",
+      "ts": 58106,
+      "pid": 0,
+      "tid": "req_1",
+      "s": "t",
+      "args": {
+        "total_tokens": 28,
+        "generated": 12
+      }
+    },
+    {
+      "name": "scheduler.schedule",
+      "cat": "scheduling",
+      "ph": "X",
+      "ts": 58122,
+      "dur": 4,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 14,
+        "num_waiting": 0,
+        "num_active": 2,
+        "num_prefilling": 0
+      }
+    },
+    {
+      "name": "assemble_fused_batch",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 58130,
+      "dur": 195,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 2,
+        "chunk_size": 0,
+        "has_prefill": false
+      }
+    },
+    {
+      "name": "model_forward",
+      "cat": "compute",
+      "ph": "X",
+      "ts": 58330,
+      "dur": 1742,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 14,
+        "batch_size": 2,
+        "seq_len": 1,
+        "num_decode": 2,
+        "prefill_chunk": 0
+      }
+    },
+    {
+      "name": "disassemble_fused_cache",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 60081,
+      "dur": 334,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_requests": 2
+      }
+    },
+    {
+      "name": "decode_sampling",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 60419,
+      "dur": 47,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 2
+      }
+    },
+    {
+      "name": "request_completed",
+      "cat": "lifecycle",
+      "ph": "i",
+      "ts": 60481,
+      "pid": 0,
+      "tid": "req_2",
+      "s": "t",
+      "args": {
+        "total_tokens": 24,
+        "generated": 12
+      }
+    },
+    {
+      "name": "scheduler.schedule",
+      "cat": "scheduling",
+      "ph": "X",
+      "ts": 60490,
+      "dur": 3,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 15,
+        "num_waiting": 0,
+        "num_active": 1,
+        "num_prefilling": 0
+      }
+    },
+    {
+      "name": "assemble_fused_batch",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 60496,
+      "dur": 93,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 1,
+        "chunk_size": 0,
+        "has_prefill": false
+      }
+    },
+    {
+      "name": "model_forward",
+      "cat": "compute",
+      "ph": "X",
+      "ts": 60594,
+      "dur": 2929,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 15,
+        "batch_size": 1,
+        "seq_len": 1,
+        "num_decode": 1,
+        "prefill_chunk": 0
+      }
+    },
+    {
+      "name": "disassemble_fused_cache",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 63538,
+      "dur": 171,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_requests": 1
+      }
+    },
+    {
+      "name": "decode_sampling",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 63715,
+      "dur": 71,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 1
+      }
+    },
+    {
+      "name": "scheduler.schedule",
+      "cat": "scheduling",
+      "ph": "X",
+      "ts": 63803,
+      "dur": 4,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 16,
+        "num_waiting": 0,
+        "num_active": 1,
+        "num_prefilling": 0
+      }
+    },
+    {
+      "name": "assemble_fused_batch",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 63812,
+      "dur": 114,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 1,
+        "chunk_size": 0,
+        "has_prefill": false
+      }
+    },
+    {
+      "name": "model_forward",
+      "cat": "compute",
+      "ph": "X",
+      "ts": 63932,
+      "dur": 1705,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "step": 16,
+        "batch_size": 1,
+        "seq_len": 1,
+        "num_decode": 1,
+        "prefill_chunk": 0
+      }
+    },
+    {
+      "name": "disassemble_fused_cache",
+      "cat": "memory",
+      "ph": "X",
+      "ts": 65650,
+      "dur": 165,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_requests": 1
+      }
+    },
+    {
+      "name": "decode_sampling",
+      "cat": "sampling",
+      "ph": "X",
+      "ts": 65820,
+      "dur": 56,
+      "pid": 0,
+      "tid": "system",
+      "args": {
+        "num_decode": 1
+      }
+    },
+    {
+      "name": "request_completed",
+      "cat": "lifecycle",
+      "ph": "i",
+      "ts": 65891,
+      "pid": 0,
+      "tid": "req_3",
+      "s": "t",
+      "args": {
+        "total_tokens": 29,
+        "generated": 12
+      }
+    }
+  ],
+  "metadata": {
+    "implementation": "interleaved_generate",
+    "model_params": 56769,
+    "block_size": 64,
+    "n_layer": 4,
+    "n_head": 4,
+    "device": "cpu"
+  },
+  "summary": {
+    "total_us": 65502,
+    "total_spans": 110,
+    "by_category": {
+      "cache_management": {
+        "total_us": 3668,
+        "pct": 5.6
+      },
+      "compute": {
+        "total_us": 42119,
+        "pct": 64.3
+      },
+      "lifecycle": {
+        "total_us": 0,
+        "pct": 0.0
+      },
+      "memory": {
+        "total_us": 15074,
+        "pct": 23.0
+      },
+      "prefill": {
+        "total_us": 0,
+        "pct": 0.0
+      },
+      "sampling": {
+        "total_us": 3191,
+        "pct": 4.9
+      },
+      "scheduling": {
+        "total_us": 210,
+        "pct": 0.3
+      }
+    },
+    "by_request": {
+      "req_0": {
+        "total_us": 51976
+      },
+      "req_1": {
+        "total_us": 50777
+      },
+      "req_2": {
+        "total_us": 46304
+      },
+      "req_3": {
+        "total_us": 45277
+      }
+    }
+  }
+}
