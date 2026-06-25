@@ -179,8 +179,6 @@ def draft_tree(draft_model: BigramDraftModel, current_token: int,
     expand(root, depth)
     return root
 
-
-
 def flatten_tree(root: TreeNode):
     """
     Flatten the tree into DFS order (root excluded) and build the tree
@@ -207,8 +205,32 @@ def flatten_tree(root: TreeNode):
     """
 
     nodes = []
-    tokens = []
-    positions = []
+
+    def dfs(node):
+        for child in node.children:
+            child.linear_idx = len(nodes)
+            nodes.append(child)
+            dfs(child)
+
+    dfs(root)
+    root.linear_idx = -1  # root is implicit (already in KV cache or first input position)
+
+    N = len(nodes)
+    tokens = [n.token_id for n in nodes]
+    positions = [n.depth for n in nodes]  # offset by cache_len later  
+
+    # Build the tree attention mask
+    # mask[i, j] = True iff node_i can attend to node_j
+    mask = torch.zeros(N, N, dtype=torch.bool)
+    for i, node in enumerate(nodes):
+        # Each node attends to itself
+        mask[i, i] = True
+        # And to all its ancestors that are in the linearized list
+        for anc in node.ancestors:
+            if anc.linear_idx >= 0:  # skip root (handled via past KV)
+                mask[i, anc.linear_idx] = True
+
+    return nodes, tokens, positions, mask
 
     
 
