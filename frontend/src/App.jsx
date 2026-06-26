@@ -5,6 +5,7 @@ import ArticleView from './ArticleView';
 import Bibliography from './Bibliography';
 import Visualizer from './Visualizer';
 import SimulationPage from './SimulationPage';
+import ProfilerPage from './ProfilerPage';
 import './index.css';
 
 function App() {
@@ -19,8 +20,10 @@ function App() {
       </Route>
       <Route path="/visualizer" element={<Visualizer />} />
       <Route path="/simulations" element={<SimulationPage />} />
+      <Route path="/profiler" element={<ProfilerPage />} />
     </Routes>
   );
 }
 
 export default App;
+
