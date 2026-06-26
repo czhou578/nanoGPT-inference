@@ -487,7 +487,32 @@ def verify_tree(target_model: GPTLanguageModel, root: TreeNode,
       6. Convert logits → softmax probabilities and store in a dict keyed by node.
     See: plan §"Hint 3: Tree Verification"
     """
-    raise NotImplementedError("TODO: implement verify_tree()")
+
+    nodes, tokens, positions, tree_mask = flatten_tree(root)
+
+    all_tokens = [root.token_id] + tokens
+    all_positions = [0] + positions
+
+    all_positions = [p + cache_len for p in all_positions]
+    
+    input_ids = torch.tensor([all_tokens], dtype=torch.long, device=device)
+    pos = torch.tensor([all_positions], device=device)
+
+    N = len(nodes)
+    full_mask = torch.zeros(N + 1, N + 1, dtype=torch.bool)
+    full_mask[0, 0] = True
+    full_mask[1:, 0] = True
+    full_mask[1:, 1:] = tree_mask
+
+    logits, _, new_kvs = target_model(input_ids, pos=pos, past_kvs=past_kvs,
+                                       tree_attn_mask=full_mask.unsqueeze(0))
+    
+    target_probs = {}
+    target_probs[root] = F.softmax(logits[0, 0, :], dim=-1)
+    for i, node in enumerate(nodes):
+        target_probs[node] = F.softmax(logits[0, i + 1, :], dim=-1)
+
+    return target_probs, new_kvs, nodes
 
 
 # ---------------------------------------------------------------------------
@@ -518,8 +543,59 @@ def accept_reject_tree(root: TreeNode, nodes: List[TreeNode],
          to the resampled token of the first child (or sample from target_probs[root]).
     See: plan §"Hint 4: Tree Accept/Reject"
     """
-    raise NotImplementedError("TODO: implement accept_reject_tree()")
 
+    for node in nodes:
+        parent = node.parent
+
+        p = target_probs[parent][node.token_id]
+        q = node.draft_probs[node.token_id]
+
+        ratio = (p / q).clamp(max=1.0).item()
+        node.accepted = torch.rand(1).item() < ratio        
+
+        if not node.accepted:
+
+            adjusted = torch.clamp(target_probs[parent] - node.draft_probs, min=0)
+            adj_sum = adjusted.sum()
+
+            if adj_sum > 0:
+                adjusted /= adj_sum
+            else:
+                adjusted = target_probs[parent]
+
+            node.resampled_token = torch.multinomial(adjusted, num_samples=1).item()
+
+    best_path = []
+
+    def find_best(node, current_path):
+        nonlocal best_path
+
+        for child in node.children:
+            if child.accepted:
+                child_path = current_path + [child.token_id]
+                if len(child_path) > len(best_path):
+                    best_path = child_path
+                find_best(child, child_path)
+
+    find_best(root, [])
+
+    if best_path:
+
+        node = root
+
+        for tok in best_path:
+            node = next(c for c in node.children if c.token_id == tok and c.accepted)
+            bonus = torch.multinomial(target_probs[node], num_samples=1).item()
+            best_path.append(bonus)
+    else:
+        first_child = nodes[0]
+
+        if hasattr(first_child, 'resampled_token'):
+            best_path = [first_child.resampled_token]
+        else:
+            best_path = [torch.multinomial(target_probs[root], num_samples=1).item()]
+    
+    return best_path
 
 # ---------------------------------------------------------------------------
 # Phase 5 — KV Cache Management
@@ -552,8 +628,38 @@ def trim_kv_cache_tree(new_kvs, accepted_path: List[int], root: TreeNode,
          Same for v.
     See: plan §"Hint 5: Tree KV Cache Trimming"
     """
-    raise NotImplementedError("TODO: implement trim_kv_cache_tree()")
 
+    keep_indices = [0]
+    node = root
+
+    for tok in accepted_path[:-1]:
+        child = next(c for c in node.children if c.token_id == tok and c.accepted)
+        keep_indices.append(child.linear_idx + 1)
+        node = child
+
+    
+    trimmed = []
+
+    for layer_kv in new_kvs:
+        layer_trimmed = []
+        for (k, v) in layer_kv:
+
+            past_k = k[:, :cache_len, :]
+            new_k = k[:, cache_len:, :]
+
+            selected_k = new_k[:, keep_indices, :]  # 1, L', d
+            trimmed_k = torch.cat([past_k, selected_k], dim=1)
+
+            past_v = v[:, :cache_len, :]
+            new_v = v[:, cache_len:, :]
+            selected_v = new_v[:, keep_indices, :]
+            trimmed_v = torch.cat([past_v, selected_v], dim=1)
+
+            layer_trimmed.append((trimmed_k, trimmed_v))
+
+        trimmed.append(layer_trimmed)
+
+    return trimmed
 
 # ---------------------------------------------------------------------------
 # Phase 5 — Main generation loop
@@ -581,7 +687,42 @@ def tree_speculative_generate(target_model: GPTLanguageModel,
       3. Return generated[:max_new_tokens].
     See: plan §"Putting It All Together"
     """
-    raise NotImplementedError("TODO: implement tree_speculative_generate()")
+    
+    target_model.eval()
+    generated = []
+
+    # 1. Prefill
+    input_ids = torch.tensor([prompt_tokens], dtype=torch.long, device=device)
+    positions = torch.arange(len(prompt_tokens), device=device).unsqueeze(0)
+    logits, _, past_kvs = target_model(input_ids, pos=positions)
+
+    probs = F.softmax(logits[0, -1, :], dim=-1)
+    current_token = torch.multinomial(probs, num_samples=1).item()
+    generated.append(current_token)
+
+    # 2. Tree speculative decode loop
+    while len(generated) < max_new_tokens:
+        cache_len = past_kvs[0][0][0].shape[1]
+
+        # DRAFT TREE
+        root = draft_tree(draft_model, current_token, depth=depth, width=width)
+
+        # VERIFY (single forward pass)
+        target_probs, new_kvs, nodes = verify_tree(
+            target_model, root, past_kvs, cache_len
+        )
+
+        # ACCEPT/REJECT (tree walk)
+        accepted_path = accept_reject_tree(root, nodes, target_probs)
+
+        # TRIM KV CACHE (keep only accepted path)
+        past_kvs = trim_kv_cache_tree(new_kvs, accepted_path, root, nodes, cache_len)
+
+        # Update state
+        generated.extend(accepted_path)
+        current_token = accepted_path[-1]
+
+    return generated[:max_new_tokens]
 
 
 # ---------------------------------------------------------------------------
