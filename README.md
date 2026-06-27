@@ -1,14 +1,8 @@
 # 🧠 NanoGPT Inference Engine — From First Principles
 
-<<<<<<< cuda-graph
-A deep-dive systems project that **implements 16 production inference optimizations from scratch** on top of Andrej Karpathy's NanoGPT, each paired with automated benchmark suites and interactive browser-based visualizations. The goal is to demonstrate a first-principles understanding of how modern LLM inference engines (like vLLM and SGLang) work internally — not by reading about them, but by building each component by hand.
+A deep-dive systems project that **implements 17 production inference optimizations from scratch** on top of Andrej Karpathy's NanoGPT, each paired with automated benchmark suites, a quality evaluation harness, and interactive browser-based visualizations. The goal is to demonstrate a first-principles understanding of how modern LLM inference engines (like vLLM and SGLang) work internally — not by reading about them, but by building each component by hand.
 
-> **TL;DR** — Trained a character-level GPT on Shakespeare, then progressively added KV caching, continuous batching, paged attention, chunked prefill, prefix caching, scheduling, speculative decoding, interleaved prefill-decode, INT8 quantization, radix tree prefix caching, a streaming HTTP server, fused attention, sliding window KV eviction, disaggregated prefill/decode, and CUDA graph acceleration. Every optimization is benchmarked for throughput and latency, the key concepts are visualized in a React-based interactive simulation frontend, and the implementations are compared side-by-side against vLLM and SGLang production code.
-=======
-A deep-dive systems project that **implements 15 production inference optimizations from scratch** on top of Andrej Karpathy's NanoGPT, each paired with automated benchmark suites, a quality evaluation harness, and interactive browser-based visualizations. The goal is to demonstrate a first-principles understanding of how modern LLM inference engines (like vLLM and SGLang) work internally — not by reading about them, but by building each component by hand.
-
-> **TL;DR** — Trained a character-level GPT on Shakespeare, then progressively added KV caching, sliding-window attention, continuous batching, paged attention, chunked prefill, prefix caching, scheduling, speculative decoding, interleaved prefill-decode, fused attention, INT8 quantization, radix tree prefix caching, disaggregated prefill, and a streaming HTTP server. Every optimization is benchmarked for throughput and latency, validated for output quality via an automated eval harness with regression detection, the key concepts are visualized in a React-based interactive simulation frontend, and the implementations are compared side-by-side against vLLM and SGLang production code.
->>>>>>> main
+> **TL;DR** — Trained a character-level GPT on Shakespeare, then progressively added KV caching, sliding-window attention, continuous batching, paged attention, chunked prefill, prefix caching, scheduling, speculative decoding (chain and tree), interleaved prefill-decode, fused attention, INT8 quantization, radix tree prefix caching, disaggregated prefill, CUDA graph acceleration, and a streaming HTTP server. Every optimization is benchmarked for throughput and latency, validated for output quality via an automated eval harness with regression detection, the key concepts are visualized in a React-based interactive simulation frontend, and the implementations are compared side-by-side against vLLM and SGLang production code. We also built a full-stack inference profiler to visualize request timelines and trace performance bottlenecks.
 
 ---
 
@@ -30,16 +24,12 @@ graph LR
     I --> I2["Fused\nAttention"]
     I2 --> J["Quantization"]
     J --> K["Radix Tree"]
-<<<<<<< cuda-graph
-    K --> L["Streaming\nServer"]
-    L --> M["Fused\nAttention"]
-    M --> N["Sliding\nWindow"]
-    N --> O["Disaggregated\nPrefill/Decode"]
-    O --> P["CUDA\nGraphs"]
-=======
-    K --> K2["Disaggregated\nPrefill"]
-    K2 --> L["Streaming\nServer"]
->>>>>>> main
+    K --> K2["Streaming\nServer"]
+    K2 --> L["Fused\nAttention"]
+    L --> M["Sliding\nWindow"]
+    M --> N["Disaggregated\nPrefill/Decode"]
+    N --> O["CUDA\nGraphs"]
+    O --> P["Tree-Based\nSpec Decode"]
 ```
 
 ### Repository Structure
@@ -49,29 +39,6 @@ graph LR
 │                          Repository Structure                        │
 ├───────────────────────────────────────────────────────────────────────┤
 │                                                                       │
-<<<<<<< cuda-graph
-│  nanogpt.py                    ← Baseline: Karpathy's NanoGPT        │
-│  nanogpt-kv-cache.py           ← + KV Cache (prefill/decode split)   │
-│  nanogpt-continuous-batching.py← + Continuous Batching + Scheduler    │
-│  nanogpt-chunked-prefill.py    ← + Chunked Prefill                   │
-│  nanogpt-paged-attention.py    ← + PagedAttention (block allocator)  │
-│  nanogpt-prefix-caching.py     ← + Content-hashed prefix caching     │
-│  nanogpt-scheduling.py         ← + FCFS / Priority scheduling        │
-│  nanogpt-interleaving.py       ← + Fused prefill-decode batches      │
-│  nanogpt-spec-decode.py        ← + Speculative decoding (bigram)     │
-│  nanogpt-trigram-spec-decode.py← + Trigram draft model variant        │
-│  nanogpt-quantize.py           ← + Dynamic & Static INT8 quantization│
-│  nanogpt-radix-tree.py         ← + RadixAttention prefix caching     │
-│  server.py                     ← + Streaming HTTP server (FastAPI)   │
-│  nanogpt-fused-attention.py    ← + Fused QKV + scaled dot product    │
-│  nanogpt-sliding-window.py     ← + Sliding window KV cache eviction  │
-│  nanogpt-disaggregated-prefill.py ← + Disaggregated prefill/decode   │
-│  nanogpt-cuda-graph.py         ← + CUDA graph capture & replay       │
-│                                                                       │
-│  benchmarks/                   ← Automated benchmark suites (31 files)│
-│  tests/                        ← Correctness & equivalence tests     │
-│  results/                      ← Raw benchmark output (12 files)     │
-=======
 │  nanogpt.py                       ← Baseline: Karpathy's NanoGPT           │
 │  nanogpt-kv-cache.py              ← + KV Cache (prefill/decode split)      │
 │  nanogpt-sliding-window.py        ← + Sliding-window attention             │
@@ -83,15 +50,19 @@ graph LR
 │  nanogpt-interleaving.py          ← + Fused prefill-decode batches        │
 │  nanogpt-spec-decode.py           ← + Speculative decoding (bigram)       │
 │  nanogpt-trigram-spec-decode.py   ← + Trigram draft model variant          │
+│  nanogpt-tree-attention.py        ← + Tree-based speculative decoding     │
 │  nanogpt-fused-attention.py       ← + Fused multi-head attention kernel   │
 │  nanogpt-quantize.py              ← + Dynamic & Static INT8 quantization  │
 │  nanogpt-radix-tree.py            ← + RadixAttention prefix caching       │
 │  nanogpt-disaggregated-prefill.py ← + Disaggregated prefill/decode        │
+│  nanogpt-cuda-graph.py            ← + CUDA graph capture & replay         │
+│  nanogpt-guided-decoding.py       ← + Guided decoding / structured output │
 │  server.py                        ← + Streaming HTTP server (FastAPI)     │
 │                                                                            │
 │  benchmarks/                      ← Automated benchmark + eval suites     │
 │  results/                         ← Raw benchmark output (16 files)       │
->>>>>>> main
+│  tests/                           ← Correctness & equivalence tests       │
+│  profiler/                        ← Inference profiler instrumentation    │
 │  notes/                        ← 30+ research notes & writeups       │
 │  nanogpt-notebooks/            ← Jupyter notebooks for exploration   │
 │  frontend/                     ← React + Vite interactive visualizer │
@@ -219,7 +190,23 @@ Each optimization is a standalone Python file that extends the base NanoGPT mode
 
 ---
 
-### 10. INT8 Quantization — `nanogpt-quantize.py`
+### 10. Tree-Based Speculative Decoding — `nanogpt-tree-attention.py`
+**Problem:** Chain-based speculative decoding wastes draft tokens on rejected branches. When a draft token is rejected, all subsequent tokens in the sequence are useless.
+
+**Implementation:**
+- `TreeNode` data structure for speculation tree branching
+- `draft_tree()` expands top-W candidates at each depth to form a draft tree
+- `flatten_tree()` linearizes the tree using DFS traversal and generates a custom `tree_attn_mask`
+- Uses custom position offset logic (`cache_len + depth`) so siblings share positional indices
+- `verify_tree()` executes a single forward pass utilizing the tree attention mask to verify all branches simultaneously
+- `accept_reject_tree()` performs rejection sampling via tree-walk, capturing the longest accepted path
+- `trim_kv_cache_tree()` performs complex non-contiguous index-gathering KV cache eviction for unaccepted branches
+
+**Key insight:** The transformer attention mask can represent arbitrary causal dependencies, seamlessly mapping a tree structure to a flat batch format.
+
+---
+
+### 11. INT8 Quantization — `nanogpt-quantize.py`
 **Problem:** Full FP32 model weights consume excessive memory and limit batch sizes.
 
 **Implementation:**
@@ -232,7 +219,7 @@ Each optimization is a standalone Python file that extends the base NanoGPT mode
 
 ---
 
-### 11. RadixAttention Prefix Caching — `nanogpt-radix-tree.py`
+### 12. RadixAttention Prefix Caching — `nanogpt-radix-tree.py`
 **Problem:** Flat hash-map prefix caching can't efficiently share overlapping prefixes across branching conversation trees (e.g., multiple continuations of the same system prompt).
 
 **Implementation:**
@@ -247,7 +234,7 @@ Each optimization is a standalone Python file that extends the base NanoGPT mode
 
 ---
 
-### 12. Streaming HTTP Server — `server.py`
+### 13. Streaming HTTP Server — `server.py`
 **Problem:** Real serving requires concurrent HTTP requests, streaming token output, and safe concurrency between asyncio and blocking PyTorch inference.
 
 **Implementation:**
@@ -269,7 +256,7 @@ curl -N http://localhost:8000/v1/completions \
 
 ---
 
-### 13. Fused Attention — `nanogpt-fused-attention.py`
+### 14. Fused Attention — `nanogpt-fused-attention.py`
 **Problem:** Separate Q, K, V projections result in three independent matrix multiplications, missing opportunities for kernel fusion and memory bandwidth optimization.
 
 **Implementation:**
@@ -281,7 +268,7 @@ curl -N http://localhost:8000/v1/completions \
 
 ---
 
-### 14. Sliding Window KV Cache Eviction — `nanogpt-sliding-window.py`
+### 15. Sliding Window KV Cache Eviction — `nanogpt-sliding-window.py`
 **Problem:** As sequences grow, the KV cache grows unboundedly, eventually exceeding GPU memory — especially problematic for long-running decode sessions.
 
 **Implementation:**
@@ -295,7 +282,7 @@ curl -N http://localhost:8000/v1/completions \
 
 ---
 
-### 15. Disaggregated Prefill/Decode — `nanogpt-disaggregated-prefill.py`
+### 16. Disaggregated Prefill/Decode — `nanogpt-disaggregated-prefill.py`
 **Problem:** Monolithic inference engines interleave prefill and decode on the same resources. Prefill is compute-bound while decode is memory-bandwidth-bound — running both on the same hardware wastes resources.
 
 **Implementation:**
@@ -310,7 +297,7 @@ curl -N http://localhost:8000/v1/completions \
 
 ---
 
-### 16. CUDA Graph Acceleration — `nanogpt-cuda-graph.py`
+### 17. CUDA Graph Acceleration — `nanogpt-cuda-graph.py`
 **Problem:** Each decode step launches dozens of small GPU kernels. The CPU-side overhead of dispatching each kernel (driver calls, synchronization) dominates the ~5μs of actual GPU compute per token.
 
 **Implementation:**
@@ -323,6 +310,18 @@ curl -N http://localhost:8000/v1/completions \
 - **`decode_one_token()`** — A parameter-free method that reads entirely from static buffers, ensuring the entire decode computation has fixed tensor addresses
 
 **Key insight:** CUDA graphs eliminate CPU-GPU launch overhead by recording a sequence of GPU operations once, then replaying the entire sequence as a single command. The constraint is that all tensor addresses must be static — which requires careful separation of "what changes" (values via `.copy_()`) from "what stays fixed" (tensor addresses).
+
+---
+
+### 18. Inference Profiler — `profiler/`
+**Problem:** Traditional benchmarks measure throughput but don't show where the time actually goes per request.
+
+**Implementation:**
+- **Python Instrumentation:** A `@profiled` decorator and context managers that record fine-grained timestamped spans for events like `model_forward`, `assemble_cache`, and `commit_blocks`
+- **JSON Traces:** Exports execution data in a structured Chrome Trace Event format
+- **React Timeline Viewer:** A flame-chart visualization tool (like Perfetto) that renders per-request swimlanes, showcasing exactly how prefill and decode phases interleave and overlap
+
+**Key insight:** Instrumentation needs to be separated from the core model to avoid performance pollution, making the timeline viewer an invaluable debugging and optimization tool.
 
 ---
 
@@ -351,13 +350,10 @@ Every optimization includes an automated benchmark harness in `benchmarks/` that
 | Speculative Decoding (Bigram) | `speculative_decoding_benchmark_runs.py` | Acceptance rates, K-value sweep |
 | Speculative Decoding (Trigram) | `trigram_speculative_decoding_benchmark_runs.py` | Trigram vs. bigram acceptance rates |
 | Simulation Traces | `simulation_benchmark_runs.py` | End-to-end request simulation |
-<<<<<<< cuda-graph
 | Sliding Window | `sliding_window_benchmark_runs.py` | Window size sweep, memory savings vs. quality |
 | Disaggregated Prefill | `disaggregated_prefill_benchmark_runs.py` | Monolithic vs. disaggregated throughput, TTFT, latency |
 | CUDA Graphs | `cuda_graph_benchmark_runs.py` | Eager vs. graph-captured decode throughput |
-=======
 | **Eval Harness** | **`eval_harness.py` + `eval_runs.py`** | **Quality regression detection (perplexity, diversity, consistency)** |
->>>>>>> main
 
 All raw results are stored in `results/` with detailed per-scenario breakdowns.
 
@@ -639,7 +635,6 @@ python benchmarks/test_correctness_equivalence.py
 │   ├── radix_tree_benchmark_runs.py
 │   ├── disaggregated_prefill_benchmark_runs.py
 │   ├── simulation_benchmark_runs.py
-<<<<<<< cuda-graph
 │   ├── sliding_window_benchmark_runs.py
 │   ├── disaggregated_prefill_benchmark_runs.py
 │   ├── cuda_graph_benchmark_runs.py
@@ -648,12 +643,6 @@ python benchmarks/test_correctness_equivalence.py
 │
 ├── tests/                             # Test suites
 │   └── test_fused_equivalence.py      # Fused attention correctness tests
-=======
-│   └── ... (benchmark implementations + plots)
-│
-├── tests/                             # Additional test suites
-│   └── test_fused_equivalence.py       # Fused attention correctness tests
->>>>>>> main
 │
 ├── results/                           # Raw benchmark output
 │   ├── eval_baseline.json             # Frozen eval harness baseline
@@ -661,12 +650,8 @@ python benchmarks/test_correctness_equivalence.py
 │   ├── kv_cache_results.txt
 │   ├── continuous_batching_results.txt
 │   ├── paged_attention_results.txt
-<<<<<<< cuda-graph
 │   ├── sliding_window_kv_cache_results.txt
-│   └── ... (12 result files)
-=======
 │   └── ... (16 result files)
->>>>>>> main
 │
 ├── nanogpt-notebooks/                 # Jupyter notebooks for exploration
 │   ├── nanogpt-kv-cache.ipynb
