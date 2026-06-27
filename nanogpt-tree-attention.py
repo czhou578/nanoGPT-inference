@@ -24,10 +24,8 @@ Run:
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-import heapq
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional
-import hashlib
 
 # ---------------------------------------------------------------------------
 # Hyperparameters (identical to nanogpt-trigram-spec-decode.py)
@@ -125,6 +123,14 @@ class TreeNode:
     accepted: bool = False                 # filled by accept_reject_tree()
     resampled_token: Optional[int] = None  # filled on rejection
 
+    def __hash__(self):
+        # Identity-based hash: each node is a unique position in the tree,
+        # even if two nodes hold the same token_id.
+        return id(self)
+
+    def __eq__(self, other):
+        return self is other
+
     @property
     def ancestors(self) -> List['TreeNode']:
         """Return the root-to-parent path (excluding self)."""
@@ -167,7 +173,7 @@ def draft_tree(draft_model: BigramDraftModel, current_token: int,
 
         for token_id in next_token_ids:
             child = TreeNode(
-                token_id=token_id,
+                token_id=token_id.item(),   # convert 0-dim tensor → plain int
                 draft_probs=probs,
                 parent=node,
                 children=[],
@@ -231,9 +237,6 @@ def flatten_tree(root: TreeNode):
                 mask[i, anc.linear_idx] = True
 
     return nodes, tokens, positions, mask
-
-    
-
 
 # ---------------------------------------------------------------------------
 # Phase 2 — Model with tree_attn_mask support
@@ -580,21 +583,23 @@ def accept_reject_tree(root: TreeNode, nodes: List[TreeNode],
     find_best(root, [])
 
     if best_path:
-
+        # Traverse the accepted path to find the deepest accepted node,
+        # then sample one bonus token from the target distribution at that leaf.
+        # Iterate over a snapshot so appending the bonus doesn't extend the loop.
         node = root
-
-        for tok in best_path:
+        for tok in list(best_path):
             node = next(c for c in node.children if c.token_id == tok and c.accepted)
-            bonus = torch.multinomial(target_probs[node], num_samples=1).item()
-            best_path.append(bonus)
+        bonus = torch.multinomial(target_probs[node], num_samples=1).item()
+        best_path.append(bonus)
     else:
+        # All first-level children rejected: use the resampled token of the
+        # first child, or fall back to sampling directly from target_probs[root].
         first_child = nodes[0]
-
-        if hasattr(first_child, 'resampled_token'):
+        if first_child.resampled_token is not None:
             best_path = [first_child.resampled_token]
         else:
             best_path = [torch.multinomial(target_probs[root], num_samples=1).item()]
-    
+
     return best_path
 
 # ---------------------------------------------------------------------------
