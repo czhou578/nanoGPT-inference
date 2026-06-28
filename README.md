@@ -1,8 +1,8 @@
 # 🧠 NanoGPT Inference Engine — From First Principles
 
-A deep-dive systems project that **implements 17 production inference optimizations from scratch** on top of Andrej Karpathy's NanoGPT, each paired with automated benchmark suites, a quality evaluation harness, and interactive browser-based visualizations. The goal is to demonstrate a first-principles understanding of how modern LLM inference engines (like vLLM and SGLang) work internally — not by reading about them, but by building each component by hand.
+A deep-dive systems project that **implements 19 production inference optimizations from scratch** on top of Andrej Karpathy's NanoGPT, each paired with automated benchmark suites, a quality evaluation harness, and interactive browser-based visualizations. The goal is to demonstrate a first-principles understanding of how modern LLM inference engines (like vLLM and SGLang) work internally - not by reading about them, but by building each component by hand.
 
-> **TL;DR** — Trained a character-level GPT on Shakespeare, then progressively added KV caching, sliding-window attention, continuous batching, paged attention, chunked prefill, prefix caching, scheduling, speculative decoding (chain and tree), interleaved prefill-decode, fused attention, INT8 quantization, radix tree prefix caching, disaggregated prefill, CUDA graph acceleration, and a streaming HTTP server. Every optimization is benchmarked for throughput and latency, validated for output quality via an automated eval harness with regression detection, the key concepts are visualized in a React-based interactive simulation frontend, and the implementations are compared side-by-side against vLLM and SGLang production code. We also built a full-stack inference profiler to visualize request timelines and trace performance bottlenecks.
+> **TL;DR** - Trained a character-level GPT on Shakespeare, then progressively added KV caching, sliding-window attention, continuous batching, paged attention, chunked prefill, prefix caching, scheduling, speculative decoding (chain and tree), interleaved prefill-decode, fused attention, INT8 quantization, radix tree prefix caching, disaggregated prefill, CUDA graph acceleration, guided decoding, early exit heads, and a streaming HTTP server. Every optimization is benchmarked for throughput and latency, validated for output quality via an automated eval harness with regression detection, the key concepts are visualized in a React-based interactive simulation frontend, and the implementations are compared side-by-side against vLLM and SGLang production code. We also built a full-stack inference profiler to visualize request timelines and trace performance bottlenecks.
 
 ---
 
@@ -30,6 +30,8 @@ graph LR
     M --> N["Disaggregated\nPrefill/Decode"]
     N --> O["CUDA\nGraphs"]
     O --> P["Tree-Based\nSpec Decode"]
+    P --> Q["Guided\nDecoding"]
+    Q --> R["Early Exit\nHeads"]
 ```
 
 ### Repository Structure
@@ -57,6 +59,7 @@ graph LR
 │  nanogpt-disaggregated-prefill.py ← + Disaggregated prefill/decode        │
 │  nanogpt-cuda-graph.py            ← + CUDA graph capture & replay         │
 │  nanogpt-guided-decoding.py       ← + Guided decoding / structured output │
+│  nanogpt-exit-head.py             ← + Early exit heads / adaptive compute │
 │  server.py                        ← + Streaming HTTP server (FastAPI)     │
 │                                                                            │
 │  benchmarks/                      ← Automated benchmark + eval suites     │
@@ -322,6 +325,20 @@ curl -N http://localhost:8000/v1/completions \
 - **React Timeline Viewer:** A flame-chart visualization tool (like Perfetto) that renders per-request swimlanes, showcasing exactly how prefill and decode phases interleave and overlap
 
 **Key insight:** Instrumentation needs to be separated from the core model to avoid performance pollution, making the timeline viewer an invaluable debugging and optimization tool.
+
+---
+
+### 19. Early Exit Heads - `nanogpt-exit-head.py`
+**Problem:** Every token - easy or hard - passes through every transformer layer. A space or punctuation character gets the same compute as a rare word completing a complex phrase. This is wasteful: easy tokens are often predictable after just 1-2 layers.
+
+**Implementation:**
+- `ExitHead` module (LayerNorm + Linear) attached after each transformer block except the last
+- **Joint training loss:** `L_final + alpha * sum(L_exit_i)` trains exit heads to predict alongside the final `lm_head`, encouraging intermediate representations to be directly useful for prediction
+- **Confidence-gated early exit:** During decode, if `max(softmax(exit_logits)) > threshold`, the model returns the exit head's prediction and skips deeper layers
+- **KV cache backfill:** After early exit, remaining blocks still run to populate their KV caches for future tokens, ensuring cache consistency
+- Per-layer exit statistics tracking shows what fraction of tokens exit at each depth
+
+**Key insight:** The model learns which tokens are "easy" (spaces, punctuation, common words) and which are "hard" (rare words, ambiguous contexts). Exit heads are conceptually draft models embedded inside the target model - the same insight behind Medusa-style speculative decoding.
 
 ---
 
