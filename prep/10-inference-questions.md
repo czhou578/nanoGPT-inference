@@ -27,8 +27,16 @@ Scheduling will look like this:
     5. Check: did any request hit its max_new_tokens? → remove it, emit its result
     6. Go to 1
 
-3. Key-Value Cache Utilization: In autoregressive generation, the model can cache the key/value pairs from prior tokens to avoid recomputing them on each step. How could you leverage KV caching to speed up inference in a multi-turn conversation or for repeated prompts across requests? Describe how you might implement a cache for previously computed states and discuss the memory vs. compute trade-offs involved. How would you decide when to reuse or discard cached states, and what are the challenges in managing cache consistency in a high-throughput setting? (Tests knowledge of transformer KV caching mechanics and the ability to weigh memory overhead against compute savings in practice.)
+3. Key-Value Cache Utilization: In autoregressive generation, the model can cache the key/value pairs from prior tokens to avoid recomputing them on each step. How could you leverage KV caching to speed up inference in a multi-turn conversation or for repeated prompts across requests? 
+
+Describe how you might implement a cache for previously computed states and discuss the memory vs. compute trade-offs involved. 
+
+How would you decide when to reuse or discard cached states, and what are the challenges in managing cache consistency in a high-throughput setting? (Tests knowledge of transformer KV caching mechanics and the ability to weigh memory overhead against compute savings in practice.)
+
+## Answer
 
 KV caching can be used to by avoiding redundant calculations for previous tokens. We can implement a global cache for K/V pairs that can be shared across requests. However, this will increase the memory usage of the system. By implementing prefix caching, we can cache the KV pairs for the shared prefixes of requests. 
+
+I would decide to discard cached states when the length of the cached states exceeds the context window of the model. This is because the model can only process a fixed amount of tokens at once, and if the cached states exceed this limit, the model will not be able to use them. The challenges are that we need to keep track of the length of the cached states and the number of active requests. We also need to make sure that the cached states are consistent with the current states of the model. 
 
 
