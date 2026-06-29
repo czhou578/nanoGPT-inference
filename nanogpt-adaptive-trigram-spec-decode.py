@@ -1,21 +1,3 @@
-"""
-NanoGPT + Speculative Decoding — Trigram Draft Model.
-
-Extends the bigram draft model to condition on two tokens of context:
-P(next|prev, current). Falls back to bigram when a (prev, current) pair
-has insufficient observations. Temperature-scaled sampling controls
-draft diversity.
-
-Builds on: nanogpt-spec-decode.py
-Key additions:
-    - TrigramDraftModel — (vocab_size, vocab_size, vocab_size) count tensor
-    - Automatic bigram fallback below min_context_count threshold
-    - Temperature-scaled sampling for draft diversity control
-    - Same verification pipeline as the bigram variant
-
-Run:
-    python nanogpt-trigram-spec-decode.py
-"""
 import torch
 import torch
 import torch.nn as nn
@@ -27,8 +9,6 @@ import hashlib
 from benchmarks.trigram_speculative_decoding_benchmark_runs import (
     run_trigram_speculative_decoding_benchmark_suite,
 )
-from benchmarks.test_correctness_equivalence import run_all_correctness_tests
-from benchmarks.simulation_benchmark_runs import run_simulation_benchmarks
 # hyperparameters
 # batch_size = 16 # how many independent sequences will we process in parallel?
 # block_size = 32 # what is the maximum context length for predictions?
@@ -187,9 +167,13 @@ def accept_reject(candidates, draft_probs, target_probs):
                       (target_probs[i] is the target's distribution for position i)
 
     Returns:
-        accepted_tokens: list of accepted tokens (1 to K+1 tokens)
+        accepted_tokens: list of emitted tokens (1 to K+1 tokens)
+        accepted_draft_count: number of draft tokens accepted before any correction
+        did_bonus: True if the full draft chain was accepted and a bonus token was sampled
+        did_resample: True if a draft token was rejected and corrected
     """
     accepted = []
+    accepted_draft_count = 0
 
     for i in range(len(candidates)):
         token = candidates[i]
@@ -198,6 +182,7 @@ def accept_reject(candidates, draft_probs, target_probs):
 
         if torch.rand(1, device=p.device).item() < (p / q).clamp(max=1.0).item():
             accepted.append(token)
+            accepted_draft_count += 1
         else:
             adjusted = torch.clamp(target_probs[i] - draft_probs[i], min=0)
             adj_sum = adjusted.sum()
@@ -209,12 +194,12 @@ def accept_reject(candidates, draft_probs, target_probs):
 
             resampled = torch.multinomial(adjusted, num_samples=1).item()
             accepted.append(resampled)
-            return accepted
+            return accepted, accepted_draft_count, False, True
     
     bonus = torch.multinomial(target_probs[len(candidates)], num_samples=1).item()
     accepted.append(bonus)
 
-    return accepted
+    return accepted, accepted_draft_count, True, False
 
 def trim_kv_cache(new_kvs, num_accepted, cache_len_before_verify):
     """
@@ -380,6 +365,67 @@ class Request:
         block_allocator.free_blocks_for_request(self.block_table)
         self.block_table = []
         self.num_filled_slots = 0
+
+@dataclass
+class AdaptiveTrigramRequestState(Request):
+    """
+    Extension of Request to track trigram state for speculative decoding.
+
+    | Field | Meaning |
+    |---|---|
+    | `current_k` | Speculation length to try next. |
+    | `min_k` | Lower bound, usually `1` or `2`. |
+    | `max_k` | Upper bound, maybe `6` or `8` for this tiny model. |
+    | `recent_accepts` | Number of accepted draft tokens in the recent window. |
+    | `recent_proposed` | Number of proposed draft tokens in the recent window. |
+    | `verify_steps` | Number of speculative verification steps observed. |
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.current_k = 3
+        self.min_k = 1
+        self.max_k = 6
+        self.recent_accepts = 0
+        self.recent_proposed = 0
+        self.verify_steps = 0
+
+    def choose_k(self, remaining_tokens):
+        """Return the next speculation length without overshooting the request."""
+        return max(self.min_k, min(self.current_k, self.max_k, remaining_tokens))
+
+    def observe_speculation_result(
+        self,
+        accepted_draft_count,
+        proposed_count,
+        adapt_every=4,
+        increase_threshold=0.70,
+        decrease_threshold=0.35,
+    ):
+        """
+        Track recent draft quality and nudge K up or down.
+
+        High draft acceptance means longer speculative chains are worth trying.
+        Low acceptance means shorter chains waste less verification work.
+        """
+        self.recent_accepts += accepted_draft_count
+        self.recent_proposed += proposed_count
+        self.verify_steps += 1
+
+        if self.verify_steps < adapt_every or self.recent_proposed == 0:
+            return
+
+        accept_rate = self.recent_accepts / self.recent_proposed
+        if accept_rate >= increase_threshold:
+            self.current_k = min(self.current_k + 1, self.max_k)
+        elif accept_rate <= decrease_threshold:
+            self.current_k = max(self.current_k - 1, self.min_k)
+
+        self.recent_accepts = 0
+        self.recent_proposed = 0
+        self.verify_steps = 0
+        
 
 def write_kv_to_pool(pool, block_table, block_size, start_pos, k_new, v_new, layer, head):
     """
@@ -1035,14 +1081,22 @@ def speculative_generate(target_model, draft_model, prompt_tokens, max_new_token
     # Sample the first token from the prefill output
     probs = F.softmax(logits[0, -1, :], dim=-1)
     current_token = torch.multinomial(probs, num_samples=1).item()
-    generated.append(current_token)    
+    generated.append(current_token)
+
+    state = AdaptiveTrigramRequestState(
+        id=0,
+        prompt_tokens=prompt_tokens,
+        max_new_tokens=max_new_tokens,
+    )
+    state.current_k = min(max(K, state.min_k), state.max_k)
 
     # 2. Speculative decode loop
     while len(generated) < max_new_tokens:
         cache_len = past_kvs[0][0][0].shape[1]  # current KV cache length
 
         # How many tokens to speculate (don't overshoot max_new_tokens)
-        k = min(K, max_new_tokens - len(generated))
+        remaining = max_new_tokens - len(generated)
+        k = state.choose_k(remaining)
 
         # DRAFT
         candidates, draft_probs = draft_tokens(draft_model, current_token, k)
@@ -1052,34 +1106,31 @@ def speculative_generate(target_model, draft_model, prompt_tokens, max_new_token
             target_model, current_token, candidates, past_kvs
         )    
 
-               # ACCEPT/REJECT
-        accepted = accept_reject(candidates, draft_probs, target_probs)
+        # ACCEPT/REJECT
+        accepted, accepted_draft_count, _, _ = accept_reject(
+            candidates,
+            draft_probs,
+            target_probs,
+        )
+        state.observe_speculation_result(accepted_draft_count, len(candidates))
 
         # TRIM KV CACHE (keep only accepted tokens)
-        past_kvs = trim_kv_cache(new_kvs, len(accepted), cache_len)
+        cached_new_tokens = 1 + accepted_draft_count
+        past_kvs = trim_kv_cache(new_kvs, cached_new_tokens, cache_len)
 
         # Update state
-        generated.extend(accepted)
-        current_token = accepted[-1]
+        generated.extend(accepted[:remaining])
+        current_token = generated[-1]
 
     return generated[:max_new_tokens] 
 
 context = torch.zeros((1,), dtype=torch.long).tolist()
 
-# run_trigram_speculative_decoding_benchmark_suite(
-#     m,
-#     vocab_size=vocab_size,
-#     device=device,
-#     block_size=block_size,
-#     training_token_ids=train_data,
-#     prompt_source_tokens=val_data,
-# )
-
-run_all_correctness_tests(
-    m,                       # your trained model
+run_trigram_speculative_decoding_benchmark_suite(
+    m,
     vocab_size=vocab_size,
     device=device,
     block_size=block_size,
-    train_data=train_data,
-    val_data=val_data,
+    training_token_ids=train_data,
+    prompt_source_tokens=val_data,
 )
