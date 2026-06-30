@@ -76,6 +76,24 @@ The complexity is that you have to manage and train a separate model which can i
 
 8. Throughput vs. Latency Trade-offs: In a high-volume LLM service, you often need to maximize total throughput (tokens/sec or queries/sec) while still meeting latency requirements for individual users. How would you balance this trade-off in practice? Consider ideas like using adaptive batch sizes (batching more aggressively during peak load vs. prioritizing low latency for realtime requests), deploying separate model replicas or service tiers for high-priority low-latency requests vs. lower-priority bulk requests, or any scheduling/allocation mechanism to ensure both objectives are met. Discuss how you would evaluate the latency-throughput sweet spot and adjust the system as load patterns change. (Tests understanding of operational trade-offs in system design and the ability to devise strategies that cater to different service level objectives for throughput and latency.)
 
+## Answer
+
+We can definitely use aggresive batch sizes during peak load, and use techniques like request coalescing to merge multiple requests into a single batch. We can also use speculative decoding to reduce the latency of each request. We could also have model replicas in different clusters. We can have warm and cold clusters that we can scale up and down based on demand. 
+
+I would evaluate the latency-throughput sweet spot by 
+
 9. Fault Tolerance in Inference Pipelines: Serving large models is not only about speed – it’s also about reliability. Suppose a generation request is part-way through when a GPU server fails or a network hiccup occurs. How could you design the system to be fault-tolerant in such cases? Discuss mechanisms like checkpointing or saving intermediate state so another node could resume if possible, retrying requests from scratch (and what that means for user experience), or running duplicate inference in parallel on redundant hardware to hedge against failures. What are the pros and cons (especially in cost and complexity) of these approaches in a production, high-throughput inference environment? (Tests the candidate’s ability to incorporate reliability and failure-handling into system design, recognizing the challenges of long-running sequential processes like LLM inference.)
 
+## Answer
+
+
+
 10. Cost-Efficiency and Scalability Considerations: Large-scale LLM inference can be extremely expensive. What strategies would you use to optimize cost while maintaining acceptable performance? Discuss options such as using smaller or distilled models for certain tasks or routing simpler queries to cheaper models, leveraging spot instances or scale-to-zero for unused capacity, sharing GPUs across multiple models or clients (multi-tenancy) to increase utilization, and using techniques like batch processing or quantization to reduce resource usage. How would you ensure the system scales cost-effectively with demand, and what trade-offs might you have to accept to stay within budget? (Tests the candidate’s ability to think beyond pure performance and design a solution that is economically sustainable, demonstrating awareness of real-world constraints like resource cost and utilization.)
+
+## Answer
+
+I would have dynamic routing to route simpler queries to smaller/distilled models. In addition, I would also take use of spot instances that will be turned on during off peak hours to further optimize cost. We could also have multiple models on a single GPU and have multi-tenancy where multiple clients share the same GPU to run their models. 
+
+Batch processing and quantization would be used to reduce resource usage. The system can scale cost effectively with demand by having a scale to zero infrastructure where the system will scale up the number of models based on the demand.  
+
+The tradeoffs are that we may need to either compromise on model quality when necessary based on the specific nature of the request, or over provision GPU's to possibly account for higher then expected demand.
