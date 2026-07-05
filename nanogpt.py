@@ -16,10 +16,11 @@ Run:
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+import time
 
 # hyperparameters
-batch_size = 64 # how many independent sequences will we process in parallel?
-block_size = 256 # what is the maximum context length for predictions?
+batch_size = 32 # how many independent sequences will we process in parallel?
+block_size = 128 # what is the maximum context length for predictions?
 max_iters = 5000
 eval_interval = 500
 learning_rate = 3e-4
@@ -32,6 +33,9 @@ dropout = 0.2
 # ------------
 
 torch.manual_seed(1337)
+torch.set_float32_matmul_precision('high')
+
+print(f"Using device: {device}")
 
 # wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
 with open('input.txt', 'r', encoding='utf-8') as f:
@@ -95,13 +99,17 @@ class Head(nn.Module):
         k = self.key(x)   # (B,T,hs)
         q = self.query(x) # (B,T,hs)
         # compute attention scores ("affinities")
-        wei = q @ k.transpose(-2,-1) * k.shape[-1]**-0.5 # (B, T, hs) @ (B, hs, T) -> (B, T, T)
-        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
-        wei = F.softmax(wei, dim=-1) # (B, T, T)
-        wei = self.dropout(wei)
-        # perform the weighted aggregation of the values
+        # wei = q @ k.transpose(-2,-1) * k.shape[-1]**-0.5 # (B, T, hs) @ (B, hs, T) -> (B, T, T)
+        # wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
+        # wei = F.softmax(wei, dim=-1) # (B, T, T)
+        # wei = self.dropout(wei)
+        # # perform the weighted aggregation of the values
         v = self.value(x) # (B,T,hs)
-        out = wei @ v # (B, T, T) @ (B, T, hs) -> (B, T, hs)
+        # out = wei @ v # (B, T, T) @ (B, T, hs) -> (B, T, hs)
+
+        # Use SDPA
+        out = F.scaled_dot_product_attention(q, k, v, is_causal=True,
+                                               dropout_p=dropout if self.training else 0.0)
         return out
 
 class MultiHeadAttention(nn.Module):
@@ -212,29 +220,52 @@ class GPTLanguageModel(nn.Module):
 
 model = GPTLanguageModel()
 m = model.to(device)
+m = torch.compile(m)
 # print the number of parameters in the model
 print(sum(p.numel() for p in m.parameters())/1e6, 'M parameters')
 
 # create a PyTorch optimizer
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
-for iter in range(max_iters):
+tokens_per_iter = batch_size * block_size
+t0 = time.perf_counter()
 
-    # every once in a while evaluate the loss on train and val sets
-    if iter % eval_interval == 0 or iter == max_iters - 1:
-        losses = estimate_loss()
-        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+for iter in range(max_iters):
 
     # sample a batch of data
     xb, yb = get_batch('train')
 
-    # evaluate the loss
-    logits, loss = model(xb, yb)
+    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+        # evaluate the loss
+        logits, loss = model(xb, yb)
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
 
+    # timing
+    if device == 'cuda':
+        torch.cuda.synchronize()
+    t1 = time.perf_counter()
+    dt = t1 - t0
+    tok_sec = tokens_per_iter / dt
+    t0 = t1
+
+    # print train loss every 100 steps
+    if iter % 100 == 0 or iter == max_iters - 1:
+        print(f"step {iter}: train loss {loss.item():.4f} | dt {dt*1000:.1f}ms | {tok_sec:.0f} tok/s")
+    else:
+        print(f"step {iter}: dt {dt*1000:.1f}ms | {tok_sec:.0f} tok/s")
+
 # generate from the model
+max_new_tokens = 500
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
-print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
+torch.cuda.synchronize() if device == 'cuda' else None
+t0 = time.perf_counter()
+generated = m.generate(context, max_new_tokens=max_new_tokens)
+torch.cuda.synchronize() if device == 'cuda' else None
+t1 = time.perf_counter()
+elapsed = t1 - t0
+tok_per_sec = max_new_tokens / elapsed
+print(decode(generated[0].tolist()))
+print(f"\nGeneration: {max_new_tokens} tokens in {elapsed:.3f}s = {tok_per_sec:.2f} tok/s")
 #open('more.txt', 'w').write(decode(m.generate(context, max_new_tokens=10000)[0].tolist()))
